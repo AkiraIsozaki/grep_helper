@@ -32,7 +32,7 @@ graph TB
 
 | 分類 | 技術 | 選定理由 |
 |------|------|----------|
-| 言語 | Python 3.8+ | 標準ライブラリが充実。venvによる軽量zip配布が可能 |
+| 言語 | Python 3.12+ | 標準ライブラリが充実。venvによる軽量zip配布が可能 |
 | AST解析 | javalang | Java 7以上のソースをPythonからAST解析できる唯一の実績あるライブラリ |
 | 入力パース | re（標準ライブラリ） | grep行のパースに正規表現で十分。外部依存不要 |
 | TSV出力 | csv（標準ライブラリ） | タブ区切り・BOM付きUTF-8出力をネイティブサポート |
@@ -135,7 +135,8 @@ def parse_grep_line(line: str) -> dict | None:
 
 def process_grep_file(path: Path, keyword: str, stats: ProcessStats) -> list[GrepRecord]:
     """grepファイル全行を処理し、第1段階（直接参照）レコードのリストを返す。
-    ファイル読み込み: encoding='utf-8', errors='replace'
+    grep結果ファイル読み込み: encoding='utf-8', errors='replace'
+    Javaソースファイル読み込み: encoding='shift_jis', errors='replace'
     """
 ```
 
@@ -143,7 +144,7 @@ def process_grep_file(path: Path, keyword: str, stats: ProcessStats) -> list[Gre
 
 ---
 
-### F-02/F-03/F-04: UsageClassifier（使用タイプ分類器）
+### F-02: UsageClassifier（使用タイプ分類器）
 
 **責務**:
 - `javalang` によるAST解析で7種の使用タイプに分類する
@@ -179,6 +180,8 @@ def classify_usage_regex(code: str) -> str:
 | 6 | メソッド引数 | `\w+\s*\(` |
 | 7 | その他 | 上記すべてに非マッチ（コメント行も含む） |
 
+**注記**: F-03（IndirectTracker）・F-04（GetterTracker）の内部からも呼び出される共通ユーティリティ
+
 **依存関係**: `javalang`, `re`, `ProcessStats`, `ASTCache`
 
 ---
@@ -211,9 +214,11 @@ def track_field(var_name: str, class_file: Path, origin: GrepRecord,
                 ast_cache: dict, stats: ProcessStats) -> list[GrepRecord]:
     """フィールドを同一クラス内で追跡する。"""
 
-def track_local(var_name: str, method_scope: str, origin: GrepRecord,
+def track_local(var_name: str, method_scope: tuple[int, int], origin: GrepRecord,
                 ast_cache: dict, stats: ProcessStats) -> list[GrepRecord]:
-    """ローカル変数を同一メソッド内で追跡する。"""
+    """ローカル変数を同一メソッド内で追跡する。
+    method_scope: (開始行番号, 終了行番号) のタプルでメソッドの行範囲を指定する。
+    """
 ```
 
 **依存関係**: `UsageClassifier`, `ASTCache`, `javalang`
@@ -290,9 +295,11 @@ def write_tsv(records: list[GrepRecord], output_path: Path) -> None:
 
 **インターフェース**:
 ```python
-def print_report(stats: ProcessStats, keyword: str) -> None:
-    """処理サマリを標準出力に出力する。
+def print_report(stats: ProcessStats, processed_files: list[str]) -> None:
+    """処理サマリを標準出力に出力する。全ファイル処理完了後に1回呼び出す。
+    processed_files: 処理した .grep ファイル名のリスト（サマリ表示用）
     出力内容:
+    - 処理したファイル一覧
     - 総行数・有効行数・スキップ行数
     - ASTフォールバックしたファイル一覧（あれば）
     - エンコーディングエラーのファイル一覧（あれば）
@@ -408,17 +415,19 @@ def determine_scope(usage_type: str, code: str) -> str:
 ### getter候補特定アルゴリズム
 
 ```python
-def find_getter_names(field_name: str, class_tree: object) -> list[str]:
+def find_getter_names(field_name: str, class_file: Path, ast_cache: dict) -> list[str]:
     """
     2方式でgetter候補を特定:
     1. 命名規則: field_name="type" → "getType"
     2. return文解析: `return field_name;` しているメソッドを全て検出
+    ast_cache を利用してファイルを再解析しない。
     """
     candidates = []
     # 方式1: 命名規則
     getter_by_convention = "get" + field_name[0].upper() + field_name[1:]
     candidates.append(getter_by_convention)
     # 方式2: ASTからreturn文を解析（javalangのAST walk）
+    # class_file を ast_cache 経由で取得し、メソッドのreturn文を検索
     # ... javalang AST走査でメソッドのreturn文を検索 ...
     return list(set(candidates))
 ```

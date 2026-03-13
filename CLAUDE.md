@@ -2,7 +2,7 @@
 
 ## 技術スタック
 
-- **言語**: Python 3.8以上
+- **言語**: Python 3.12以上
 - **主要ライブラリ**: `javalang`（Java AST解析）
 - **標準ライブラリ**: `csv`, `pathlib`, `re`, `argparse`（追加パッケージ不要）
 - **実行環境**: Python venv（zip配布）

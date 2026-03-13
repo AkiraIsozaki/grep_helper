@@ -362,7 +362,7 @@ class TestGrepParser(unittest.TestCase):
 
 | ツール | バージョン | インストール方法 |
 |--------|-----------|-----------------|
-| Python | 3.8以上 | devcontainer に含まれる |
+| Python | 3.12以上 | devcontainer に含まれる |
 | venv | Python標準 | `python -m venv .venv` |
 | javalang | 最新安定版 | `pip install javalang` |
 

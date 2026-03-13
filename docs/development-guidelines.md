@@ -202,6 +202,22 @@ for record in records:
 - `fix/[修正内容]`: バグ修正（例: `fix/ast-cache-none-handling`）
 - `refactor/[対象]`: リファクタリング
 
+**マージフロー**:
+```
+feature/* / fix/* / refactor/*
+    ↓ PR（機能完成時）
+  develop
+    ↓ PR（リリース時、zip配布タグを付与）
+   main
+```
+
+**マージ条件**:
+- レビュアー1名以上の承認
+- 全テストパス（`python -m unittest discover`）
+- コードスタイル準拠（`python -m flake8 analyze.py`）
+- `feature/*` / `fix/*` → `develop` へマージ後、ブランチを削除する
+- `develop` → `main` はリリース時のみ（`vX.Y.Z` タグを付与）
+
 ### コミットメッセージ規約
 
 **フォーマット**:
@@ -237,11 +253,17 @@ Closes #12
 
 ### プルリクエストプロセス
 
-**作成前のチェック**:
+**作成前のチェック（作成者）**:
 - [ ] 全てのテストがパス（`python -m unittest discover`）
 - [ ] 構文エラーがない（`python -m py_compile analyze.py`）
+- [ ] コードスタイル準拠（`python -m flake8 analyze.py`）
 - [ ] 型ヒントが適切に付与されている
 - [ ] `USAGE_PATTERNS` 等の定数がモジュールレベルで定義されている
+
+**マージ条件（レビュアー）**:
+- レビュアー1名以上の承認
+- 上記チェックリストが全て完了していること
+- マージ後はブランチを削除する
 
 ## テスト戦略
 
@@ -250,7 +272,7 @@ Closes #12
 #### ユニットテスト（`test_analyze.py`）
 
 **対象**: 個別の関数・クラス
-**カバレッジ目標**: 80%以上
+**カバレッジ目標**: 80%以上（PRレビュー前に `coverage report` で確認。80%を下回る場合はテスト追加を推奨するが、マージのブロック条件ではない）
 **フレームワーク**: `unittest`（標準ライブラリ）
 
 ```python
@@ -319,12 +341,31 @@ class TestUsageClassifier(unittest.TestCase):
 
 #### 統合テスト（網羅率KPIテスト）
 
+**フィクスチャ管理方針**:
+```
+tests/fixtures/
+├── input/
+│   └── SAMPLE.grep          # サンプルgrep結果ファイル
+├── java/
+│   ├── Constants.java        # サンプルJavaソース（直接参照・定数）
+│   ├── Entity.java           # サンプルJavaソース（フィールド・getter）
+│   └── Service.java          # サンプルJavaソース（間接参照・getter呼び出し）
+└── expected/
+    └── SAMPLE.tsv            # 期待出力TSV（手動作成・コミット管理）
+```
+
 ```python
 class TestIntegration(unittest.TestCase):
+    """E2E統合テスト。
+    フィクスチャは tests/fixtures/ 以下に配置する。
+    期待TSV（expected/*.tsv）は手動作成してコミット管理する。
+    """
+    FIXTURES_DIR = Path(__file__).parent / "tests" / "fixtures"
 
     def test_full_flow_direct_reference(self):
         """直接参照がTSVに正しく出力されることを確認"""
-        # サンプルgrep結果ファイルと期待出力を用意して比較
+        # FIXTURES_DIR / "input" と "java" を使ってmain()を実行し、
+        # 出力TSVと FIXTURES_DIR / "expected/SAMPLE.tsv" を比較する
         ...
 
     def test_full_flow_indirect_reference(self):
@@ -404,11 +445,39 @@ coverage html  # htmlcov/index.html で視覚的に確認
 
 | ツール | バージョン | インストール方法 |
 |--------|-----------|-----------------|
-| Python | 3.8以上 | devcontainer に含まれる |
-| venv | Python標準 | Python 3.8+ に同梱 |
+| Python | 3.12以上 | devcontainer に含まれる |
+| venv | Python標準 | Python 3.12+ に同梱 |
 | javalang | >=0.13.0,<1.0.0 | `pip install -r requirements.txt` |
 
+**flake8設定** (`.flake8`):
+```ini
+[flake8]
+max-line-length = 120
+exclude =
+    .venv,
+    __pycache__,
+    dist,
+    .steering
+```
+プロジェクトルートの `.flake8` で設定済み。`python -m flake8 analyze.py` で実行する。
+
 ### セットアップ手順
+
+#### devcontainerを使う場合（推奨）
+
+VS Code Dev Containers または GitHub Codespaces を使うと、Python 3.12とvenvが自動でセットアップされます。
+
+```bash
+# VS Code Dev Containers
+# 1. VS Code で「Reopen in Container」を実行
+# 2. コンテナ起動後、依存関係をインストール
+pip install -r requirements.txt
+
+# 3. テストの実行
+python -m unittest discover -v
+```
+
+#### ローカル環境を使う場合
 
 ```bash
 # 1. リポジトリのクローン
