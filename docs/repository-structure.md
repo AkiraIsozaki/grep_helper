@@ -3,7 +3,7 @@
 ## プロジェクト構造
 
 ```
-grep_analyzer/
+/（リポジトリルート）
 ├── analyze.py           # エントリーポイント（全ロジック）
 ├── test_analyze.py      # unittestによる単体テスト
 ├── requirements.txt     # 依存ライブラリ（javalang のみ）
@@ -13,19 +13,31 @@ grep_analyzer/
 ├── run.bat              # 実行ラッパー（Windows）
 ├── Makefile             # `make package` でdist/grep_analyzer.zipを生成
 ├── README.txt           # 利用者向け手順書（日本語）
+├── CLAUDE.md            # Claude Code設定（AIアシスタントへの指示・技術スタック）
+├── .flake8              # flake8設定（max-line-length=120等）
+├── .gitignore           # Git除外設定
 ├── input/               # grep結果ファイルの配置ディレクトリ
 │   └── .gitkeep
 ├── output/              # TSV出力先ディレクトリ（自動作成）
 │   └── .gitkeep
-└── docs/                # プロジェクトドキュメント
-    ├── ideas/
-    │   └── initial-requirements.md
-    ├── product-requirements.md
-    ├── functional-design.md
-    ├── architecture.md
-    ├── repository-structure.md  （本ドキュメント）
-    ├── development-guidelines.md
-    └── glossary.md
+├── tests/               # 統合テスト用フィクスチャ
+│   └── fixtures/
+│       ├── input/       # サンプルgrep結果ファイル
+│       ├── java/        # サンプルJavaソースファイル
+│       └── expected/    # 期待出力TSV（手動作成・コミット管理）
+├── docs/                # プロジェクトドキュメント
+│   ├── ideas/
+│   │   └── initial-requirements.md
+│   ├── product-requirements.md
+│   ├── functional-design.md
+│   ├── architecture.md
+│   ├── repository-structure.md  （本ドキュメント）
+│   ├── development-guidelines.md
+│   └── glossary.md
+├── .claude/             # Claude Code設定・スキル定義
+├── .devcontainer/       # VS Code Dev Containers設定
+└── .steering/           # 作業単位のステアリングファイル（作業時に生成）
+    └── [YYYYMMDD]-[task-name]/
 ```
 
 ## ディレクトリ詳細
@@ -99,6 +111,20 @@ test_analyze.py
 
 ---
 
+### README.txt（利用者向け手順書）
+
+**役割**: zip配布物に同梱する日本語の手順書。Claude Codeなどの開発ツールに依存しない利用者向けドキュメント。
+
+**記載すべき最低限の内容**:
+1. 前提条件（Python 3.12以上、対応OS）
+2. セットアップ手順（`setup.sh` / `setup.bat` の実行方法）
+3. 基本的な使い方（`grep -rn "文言" /path/to/java > input/文言.grep` → `run.sh --source-dir ...`）
+4. CLIオプション一覧（`--source-dir`・`--input-dir`・`--output-dir`）
+5. 出力TSVの列定義
+6. よくあるエラーと対処方法
+
+---
+
 ### input/ および output/
 
 **役割**:
@@ -121,6 +147,29 @@ output/
 ├── ERROR_CODE.tsv     # ERROR_CODE の分析結果
 └── STATUS_OK.tsv      # STATUS_OK の分析結果
 ```
+
+---
+
+### tests/（統合テスト用フィクスチャ）
+
+**役割**: `TestIntegration` クラスが使用するサンプルファイル群
+
+**構造**:
+```
+tests/fixtures/
+├── input/
+│   └── SAMPLE.grep          # サンプルgrep結果ファイル
+├── java/
+│   ├── Constants.java        # 直接参照・定数定義のサンプルJavaソース
+│   ├── Entity.java           # フィールド・getterのサンプルJavaソース
+│   └── Service.java          # 間接参照・getter呼び出しのサンプルJavaソース
+└── expected/
+    └── SAMPLE.tsv            # 期待出力TSV（手動作成・コミット管理）
+```
+
+**運用ルール**:
+- `expected/*.tsv` は手動作成してコミット管理する（自動生成しない）
+- サンプルJavaソースは最小限のコード行数で全参照パターンをカバーする
 
 ---
 
@@ -230,6 +279,10 @@ clean:
   - 例: `analyze.py`, `test_analyze.py`
 - **シェルスクリプト**: `snake_case.sh`
   - 例: `run.sh`, `setup.sh`
+- **ドキュメント（Markdown）**: `kebab-case.md`
+  - 例: `product-requirements.md`, `functional-design.md`
+- **ステアリングディレクトリ**: `[YYYYMMDD]-[task-name]` 形式（`kebab-case`）
+  - 例: `20250115-implement-f01-grep-parser`
 
 ### Pythonコード内
 
@@ -245,7 +298,9 @@ clean:
 ## 依存関係のルール
 
 ```
-analyze.py (エントリーポイント)
+test_analyze.py (テストファイル)
+    ↓ (import)
+analyze.py (エントリーポイント)   ← テスト対象として依存可
     ↓ (import)
 re, csv, argparse, pathlib, sys, dataclasses, enum  # 標準ライブラリ
     ↓ (import)
@@ -253,8 +308,9 @@ javalang  # 唯一の外部依存
 ```
 
 **禁止される依存**:
-- `test_analyze.py` → `analyze.py` 以外のモジュール（外部ライブラリのみ）
-- 新しい外部ライブラリの追加（原則として `javalang` のみ）
+- `analyze.py` に `javalang` 以外の外部ライブラリを追加しない
+- `test_analyze.py` に `unittest` 以外の外部ライブラリを追加しない
+- `test_analyze.py` から `analyze.py` 以外の独自モジュールをインポートしない
 
 ## スケーリング戦略
 
@@ -311,13 +367,21 @@ grep_analyzer/
 
 **役割**: Claude Code設定とカスタマイズ
 
-**構造**:
+**主要なサブディレクトリ**（詳細はClaude Code公式ドキュメント参照）:
 ```
 .claude/
-├── commands/                # スラッシュコマンド
-├── skills/                  # タスクモード別スキル
-└── agents/                  # サブエージェント定義
+├── commands/                # スラッシュコマンド定義
+├── skills/                  # タスクモード別スキル定義
+└── settings.json            # Claude Code設定ファイル
 ```
+
+### CLAUDE.md（AIアシスタント設定）
+
+**役割**: Claude Codeへの動作指示とプロジェクトメモリ。技術スタック・開発プロセス・ディレクトリ構造の概要を定義する。新規参加者がプロジェクト全体像を把握するための出発点でもある。
+
+### .flake8（コードスタイル設定）
+
+**役割**: flake8の設定ファイル。`max-line-length = 120` を定義し、`.venv/`・`dist/`・`.steering/` を解析対象から除外する。
 
 ## 除外設定
 
