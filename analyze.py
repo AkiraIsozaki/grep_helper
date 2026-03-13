@@ -123,7 +123,7 @@ def parse_grep_line(line: str) -> dict | None:
 
     # filepath:lineno:code の形式でパース
     # maxsplit=1 でWindowsパス（C:\...）の最初の数字コロンで分割
-    parts = re.split(r':(\d+):', stripped, maxsplit=1)
+    parts = _GREP_LINE_PATTERN.split(stripped, maxsplit=1)
     if len(parts) != 3:
         return None
 
@@ -290,7 +290,9 @@ def classify_usage(
         if usage is not None:
             return usage
     except Exception:
-        pass
+        # AST走査中の予期しない例外 → フォールバック対象として記録して継続
+        if filepath not in stats.fallback_files:
+            stats.fallback_files.append(filepath)
 
     # AST解析で判定できなかった場合は正規表現フォールバック
     return classify_usage_regex(code)
@@ -309,7 +311,7 @@ def _classify_by_ast(tree: object, lineno: int) -> str | None:
     if not _JAVALANG_AVAILABLE:
         return None
 
-    for path, node in tree:
+    for _, node in tree:
         if not hasattr(node, 'position') or node.position is None:
             continue
         if node.position.line != lineno:
@@ -348,6 +350,447 @@ def _classify_by_ast(tree: object, lineno: int) -> str | None:
             return UsageType.ARGUMENT.value
 
     return None
+
+
+# ---------------------------------------------------------------------------
+# F-03: IndirectTracker
+# ---------------------------------------------------------------------------
+
+# フィールド宣言判定用パターン
+_FIELD_DECL_PATTERN = re.compile(
+    r'^(private|protected|public|static|final|\s)*\s+\w[\w<>\[\]]*\s+\w+\s*[=;]'
+)
+
+
+def determine_scope(usage_type: str, code: str) -> str:
+    """変数の種類に応じた追跡スコープを返す。
+
+    Args:
+        usage_type: 使用タイプ文字列（UsageType.value）
+        code:       変数定義のコード行
+
+    Returns:
+        "project"（定数）/ "class"（フィールド）/ "method"（ローカル変数）
+    """
+    if usage_type == UsageType.CONSTANT.value:
+        return "project"
+    stripped = code.strip()
+    # フィールド判定: クラスレベルの宣言（アクセス修飾子 + 型 + 名前 の形式）
+    if _FIELD_DECL_PATTERN.match(stripped):
+        return "class"
+    return "method"
+
+
+def extract_variable_name(code: str, usage_type: str) -> str | None:
+    """定数/変数の名前をコード行から抽出する。
+
+    左辺（= より前）の最後の識別子を変数名とみなす。
+    例: "public static final String CODE = ..." → "CODE"
+    例: "String msg = CODE;" → "msg"
+    例: "private String type;" → "type"
+
+    Args:
+        code:       変数定義のコード行
+        usage_type: 使用タイプ文字列（現在は未使用だがインターフェース上受け取る）
+
+    Returns:
+        変数名文字列、または抽出できない場合は None
+    """
+    stripped = code.strip().rstrip(';')
+    # = の左辺のみを対象にする
+    decl_part = stripped.split('=')[0].strip()
+    # 最後のトークン（識別子）が変数名
+    tokens = decl_part.split()
+    if len(tokens) >= 2:
+        # 末尾トークンから記号を除去して返す
+        name = tokens[-1].strip('[];(){}<>')
+        if name.isidentifier():
+            return name
+    return None
+
+
+def _resolve_java_file(filepath: str, source_dir: Path) -> Path | None:
+    """filepathをPathオブジェクトに解決する。
+
+    Args:
+        filepath:   Javaファイルのパス（相対または絶対）
+        source_dir: Javaソースのルートディレクトリ
+
+    Returns:
+        存在する Path、または解決できない場合は None
+    """
+    candidate = Path(filepath)
+    if candidate.is_absolute():
+        return candidate if candidate.exists() else None
+    resolved = source_dir / filepath
+    if resolved.exists():
+        return resolved
+    return None
+
+
+def _get_method_scope(
+    filepath: str, source_dir: Path, lineno: int
+) -> tuple[int, int] | None:
+    """指定行を含むメソッドの行範囲を返す（内部ヘルパー）。
+
+    javalang でメソッド開始行を取得し、ブレースカウンタで終了行を特定する。
+    javalang はノードの終了行を提供しないため、ブレースカウンタ方式を採用。
+
+    Args:
+        filepath:   Javaファイルのパス
+        source_dir: Javaソースのルートディレクトリ
+        lineno:     対象行の行番号
+
+    Returns:
+        (start_line, end_line) のタプル、または特定不能の場合は None
+    """
+    if not _JAVALANG_AVAILABLE:
+        return None
+
+    tree = get_ast(filepath, source_dir)
+    if tree is None:
+        return None
+
+    # メソッド開始行をすべて収集してソート
+    method_starts: list[int] = []
+    try:
+        for _, method_decl in tree.filter(javalang.tree.MethodDeclaration):
+            if method_decl.position:
+                method_starts.append(method_decl.position.line)
+    except Exception:
+        return None
+
+    if not method_starts:
+        return None
+
+    method_starts.sort()
+
+    # lineno を含むメソッドの開始行を特定（lineno 以下で最大のもの）
+    method_start = None
+    for start in method_starts:
+        if start <= lineno:
+            method_start = start
+
+    if method_start is None:
+        return None
+
+    # ソースを読み込んでブレースカウンタでメソッド終了行を探す
+    java_file = _resolve_java_file(filepath, source_dir)
+    if java_file is None:
+        return None
+
+    try:
+        lines = java_file.read_text(encoding="shift_jis", errors="replace").splitlines()
+    except Exception:
+        return None
+
+    brace_count = 0
+    found_open = False
+    for i, line in enumerate(lines[method_start - 1:], start=method_start):
+        brace_count += line.count('{') - line.count('}')
+        if not found_open and brace_count > 0:
+            found_open = True
+        if found_open and brace_count <= 0:
+            return (method_start, i)
+
+    return None
+
+
+def _search_in_lines(
+    lines: list[str],
+    var_name: str,
+    start_line: int,
+    origin: GrepRecord,
+    source_dir: Path,
+    ref_type: str,
+    stats: ProcessStats,
+    filepath_for_record: str,
+) -> list[GrepRecord]:
+    """行リストから var_name を検索してGrepRecordを生成する（内部ヘルパー）。
+
+    Args:
+        lines:              検索対象の行リスト（0-indexed）
+        var_name:           検索する変数名（単語境界マッチ）
+        start_line:         lines[0] に対応する行番号（1-indexed）
+        origin:             間接参照元の直接参照レコード
+        source_dir:         Javaソースのルートディレクトリ
+        ref_type:           参照種別（RefType.INDIRECT.value 等）
+        stats:              処理統計
+        filepath_for_record: GrepRecord に記録するファイルパス文字列
+
+    Returns:
+        生成した GrepRecord のリスト
+    """
+    pattern = re.compile(r'\b' + re.escape(var_name) + r'\b')
+    records: list[GrepRecord] = []
+
+    for idx, line in enumerate(lines):
+        current_lineno = start_line + idx
+        # 定義行（origin）はスキップ
+        if (filepath_for_record == origin.filepath
+                and str(current_lineno) == origin.lineno):
+            continue
+        if not pattern.search(line):
+            continue
+
+        code = line.strip()
+        usage_type = classify_usage(
+            code=code,
+            filepath=filepath_for_record,
+            lineno=current_lineno,
+            source_dir=source_dir,
+            stats=stats,
+        )
+        records.append(GrepRecord(
+            keyword=origin.keyword,
+            ref_type=ref_type,
+            usage_type=usage_type,
+            filepath=filepath_for_record,
+            lineno=str(current_lineno),
+            code=code,
+            src_var=var_name,
+            src_file=origin.filepath,
+            src_lineno=origin.lineno,
+        ))
+
+    return records
+
+
+def track_constant(
+    var_name: str,
+    source_dir: Path,
+    origin: GrepRecord,
+    stats: ProcessStats,
+) -> list[GrepRecord]:
+    """static final の定数をプロジェクト全体で追跡する。
+
+    Args:
+        var_name:   追跡する定数名
+        source_dir: Javaソースのルートディレクトリ
+        origin:     定数定義の直接参照レコード
+        stats:      処理統計
+
+    Returns:
+        間接参照 GrepRecord のリスト
+    """
+    records: list[GrepRecord] = []
+
+    for java_file in sorted(source_dir.rglob("*.java")):
+        try:
+            lines = java_file.read_text(encoding="shift_jis", errors="replace").splitlines()
+        except Exception:
+            stats.encoding_errors.append(str(java_file))
+            continue
+
+        filepath_str = str(java_file)
+        records.extend(_search_in_lines(
+            lines=lines,
+            var_name=var_name,
+            start_line=1,
+            origin=origin,
+            source_dir=source_dir,
+            ref_type=RefType.INDIRECT.value,
+            stats=stats,
+            filepath_for_record=filepath_str,
+        ))
+
+    return records
+
+
+def track_field(
+    var_name: str,
+    class_file: Path,
+    origin: GrepRecord,
+    source_dir: Path,
+    stats: ProcessStats,
+) -> list[GrepRecord]:
+    """フィールドを同一クラス内で追跡する。
+
+    Args:
+        var_name:   追跡するフィールド名
+        class_file: フィールドが定義されたJavaファイル
+        origin:     フィールド定義の直接参照レコード
+        source_dir: Javaソースのルートディレクトリ
+        stats:      処理統計
+
+    Returns:
+        間接参照 GrepRecord のリスト
+    """
+    try:
+        lines = class_file.read_text(encoding="shift_jis", errors="replace").splitlines()
+    except Exception:
+        stats.encoding_errors.append(str(class_file))
+        return []
+
+    return _search_in_lines(
+        lines=lines,
+        var_name=var_name,
+        start_line=1,
+        origin=origin,
+        source_dir=source_dir,
+        ref_type=RefType.INDIRECT.value,
+        stats=stats,
+        filepath_for_record=str(class_file),
+    )
+
+
+def track_local(
+    var_name: str,
+    method_scope: tuple[int, int],
+    origin: GrepRecord,
+    source_dir: Path,
+    stats: ProcessStats,
+) -> list[GrepRecord]:
+    """ローカル変数を同一メソッド内で追跡する。
+
+    Args:
+        var_name:     追跡するローカル変数名
+        method_scope: (開始行番号, 終了行番号) のタプルでメソッドの行範囲を指定
+        origin:       変数定義の直接参照レコード
+        source_dir:   Javaソースのルートディレクトリ
+        stats:        処理統計
+
+    Returns:
+        間接参照 GrepRecord のリスト
+    """
+    java_file = _resolve_java_file(origin.filepath, source_dir)
+    if java_file is None:
+        return []
+
+    try:
+        all_lines = java_file.read_text(encoding="shift_jis", errors="replace").splitlines()
+    except Exception:
+        stats.encoding_errors.append(str(java_file))
+        return []
+
+    start_line, end_line = method_scope
+    # 0-indexed スライス: lines[start-1 : end]
+    method_lines = all_lines[start_line - 1:end_line]
+
+    return _search_in_lines(
+        lines=method_lines,
+        var_name=var_name,
+        start_line=start_line,
+        origin=origin,
+        source_dir=source_dir,
+        ref_type=RefType.INDIRECT.value,
+        stats=stats,
+        filepath_for_record=origin.filepath,
+    )
+
+
+# ---------------------------------------------------------------------------
+# F-04: GetterTracker
+# ---------------------------------------------------------------------------
+
+def find_getter_names(field_name: str, class_file: Path) -> list[str]:
+    """クラスファイルからgetterメソッド名の候補リストを返す。
+
+    2方式を併用:
+    1. 命名規則: field_name="type" → "getType"
+    2. return文解析: `return field_name;` しているメソッドを全て検出（非標準命名も対象）
+
+    Args:
+        field_name: フィールド名
+        class_file: フィールドが定義されたJavaファイル
+
+    Returns:
+        getter候補名の重複なしリスト
+    """
+    candidates: list[str] = []
+
+    # 方式1: 命名規則（field_name="type" → "getType"）
+    getter_by_convention = "get" + field_name[0].upper() + field_name[1:]
+    candidates.append(getter_by_convention)
+
+    # 方式2: ASTからreturn文を解析（javalangのAST walk）
+    if _JAVALANG_AVAILABLE:
+        cache_key = str(class_file)
+        # in 演算子でキー存在確認（.get() はNone値と未設定の区別ができないため）
+        if cache_key not in _ast_cache:
+            try:
+                source = class_file.read_text(encoding="shift_jis", errors="replace")
+                _ast_cache[cache_key] = javalang.parse.parse(source)
+            except Exception:
+                _ast_cache[cache_key] = None
+
+        tree = _ast_cache[cache_key]
+        if tree is not None:
+            try:
+                for _, method_decl in tree.filter(javalang.tree.MethodDeclaration):
+                    for _, stmt in method_decl.filter(javalang.tree.ReturnStatement):
+                        if (stmt.expression is not None
+                                and hasattr(stmt.expression, 'member')
+                                and stmt.expression.member == field_name):
+                            candidates.append(method_decl.name)
+            except Exception:
+                # AST walk失敗時は方式1(命名規則)のみで継続
+                print(
+                    f"警告: {class_file} のAST walk中にエラーが発生しました。"
+                    "getter候補を命名規則のみで決定します。",
+                    file=sys.stderr,
+                )
+
+    return list(set(candidates))
+
+
+def track_getter_calls(
+    getter_name: str,
+    source_dir: Path,
+    origin: GrepRecord,
+    stats: ProcessStats,
+) -> list[GrepRecord]:
+    """プロジェクト全体でgetter呼び出し箇所を検索・AST分類する。
+
+    false positive は許容（もれなく優先）。
+    他クラスの同名getterが混入する可能性があるが仕様上許容。
+
+    Args:
+        getter_name: 追跡するgetterメソッド名
+        source_dir:  Javaソースのルートディレクトリ
+        origin:      フィールド定義の直接参照レコード
+        stats:       処理統計
+
+    Returns:
+        間接（getter経由）参照 GrepRecord のリスト
+    """
+    # getter_name() の呼び出しパターン（単語境界 + 開き括弧）
+    pattern = re.compile(r'\b' + re.escape(getter_name) + r'\s*\(')
+    records: list[GrepRecord] = []
+
+    for java_file in sorted(source_dir.rglob("*.java")):
+        try:
+            lines = java_file.read_text(encoding="shift_jis", errors="replace").splitlines()
+        except Exception:
+            stats.encoding_errors.append(str(java_file))
+            continue
+
+        filepath_str = str(java_file)
+        for i, line in enumerate(lines, start=1):
+            if not pattern.search(line):
+                continue
+
+            code = line.strip()
+            usage_type = classify_usage(
+                code=code,
+                filepath=filepath_str,
+                lineno=i,
+                source_dir=source_dir,
+                stats=stats,
+            )
+            records.append(GrepRecord(
+                keyword=origin.keyword,
+                ref_type=RefType.GETTER.value,
+                usage_type=usage_type,
+                filepath=filepath_str,
+                lineno=str(i),
+                code=code,
+                src_var=getter_name,
+                src_file=origin.filepath,
+                src_lineno=origin.lineno,
+            ))
+
+    return records
 
 
 # ---------------------------------------------------------------------------
@@ -464,14 +907,59 @@ def main() -> None:
             keyword = grep_path.stem  # 拡張子なしのファイル名 = 検索文言
 
             # 第1段階: 直接参照の取得と分類
-            records = process_grep_file(grep_path, keyword, source_dir, stats)
+            direct_records = process_grep_file(grep_path, keyword, source_dir, stats)
+            all_records: list[GrepRecord] = list(direct_records)
+
+            # 第2・第3段階: 間接参照・getter経由参照の追跡
+            for record in direct_records:
+                if record.usage_type not in (
+                    UsageType.CONSTANT.value, UsageType.VARIABLE.value
+                ):
+                    continue
+
+                var_name = extract_variable_name(record.code, record.usage_type)
+                if not var_name:
+                    continue
+
+                scope = determine_scope(record.usage_type, record.code)
+
+                if scope == "project":
+                    # 第2段階: 定数をプロジェクト全体で追跡
+                    all_records.extend(
+                        track_constant(var_name, source_dir, record, stats)
+                    )
+
+                elif scope == "class":
+                    # 第2段階: フィールドを同一クラス内で追跡
+                    class_file = _resolve_java_file(record.filepath, source_dir)
+                    if class_file:
+                        indirect = track_field(var_name, class_file, record, source_dir, stats)
+                        all_records.extend(indirect)
+
+                        # 第3段階: getter経由を追跡
+                        for getter_name in find_getter_names(var_name, class_file):
+                            all_records.extend(
+                                track_getter_calls(getter_name, source_dir, record, stats)
+                            )
+
+                elif scope == "method":
+                    # 第2段階: ローカル変数を同一メソッド内で追跡
+                    method_scope = _get_method_scope(
+                        record.filepath, source_dir, int(record.lineno)
+                    )
+                    if method_scope:
+                        all_records.extend(
+                            track_local(var_name, method_scope, record, source_dir, stats)
+                        )
 
             # 出力
             output_path = output_dir / f"{keyword}.tsv"
-            write_tsv(records, output_path)
+            write_tsv(all_records, output_path)
 
             processed_files.append(grep_path.name)
-            print(f"  {grep_path.name} → {output_path} ({len(records)} 件)")
+            direct_count = len(direct_records)
+            indirect_count = len(all_records) - direct_count
+            print(f"  {grep_path.name} → {output_path} (直接: {direct_count} 件, 間接: {indirect_count} 件)")
 
     except Exception as e:
         print(f"予期しないエラー: {e}", file=sys.stderr)

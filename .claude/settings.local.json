@@ -61,7 +61,8 @@
       "Bash(cat > /workspaces/grep_helper/.flake8 << 'EOF'\n[flake8]\nmax-line-length = 120\nexclude =\n    .venv,\n    __pycache__,\n    dist,\n    .steering\nEOF)",
       "Bash(pip install:*)",
       "Bash(python -m py_compile analyze.py 2>&1; echo \"exit:$?\")",
-      "Bash(python -m flake8 analyze.py 2>&1; echo \"exit:$?\")"
+      "Bash(python -m flake8 analyze.py 2>&1; echo \"exit:$?\")",
+      "Bash(.venv/bin/python -m py_compile analyze.py && echo \"構文OK\")"
     ]
   }
 }

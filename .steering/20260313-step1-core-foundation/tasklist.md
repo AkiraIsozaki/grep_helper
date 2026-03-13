@@ -45,4 +45,27 @@
 
 ## 実装後の振り返り
 
-（実装完了後に記載）
+**実装完了日**: 2026-03-13
+
+### 計画と実績の差分
+
+- `process_grep_file()` のシグネチャに `source_dir` を追加（スペックには含まれていなかったが、内部で `classify_usage` を呼ぶ設計上必要と判断）。機能設計書と乖離しているが次ステップで整合を確認する。
+- `classify_usage()` の `ast_cache` 引数をグローバル変数 `_ast_cache` で代替。テストしやすさより実装シンプルさを優先した。
+- F-06 Reporter は `main()` 内に簡易実装として内包（次ステップで独立関数化）。
+
+### バリデーターで検出・修正した問題
+
+1. `_GREP_LINE_PATTERN` が定義のみで未使用 → `re.split()` インライン呼び出しを `_GREP_LINE_PATTERN.split()` に修正
+2. `except Exception: pass` → `stats.fallback_files` 記録付きに修正
+3. `for path, node in tree:` の `path` が未使用 → `_` に変更
+
+### 学んだこと
+
+- flake8 の E221（複数スペースによる整列）は Enum や dataclass の定義で発生しやすい。整列は使わずスペース1つで統一すること。
+- `re.Pattern.split()` は `re.split(pattern_str, ...)` と同等だが、プリコンパイル済みパターンを使うことでコードの意図が明確になる。
+
+### 次ステップへの申し送り
+
+- ステップ2: F-03 IndirectTracker・F-04 GetterTracker を実装する
+- `classify_usage` の `ast_cache` 引数化はステップ2実装前に検討すること（F-03・F-04 が `ast_cache` を引数で受け取る設計のため）
+- `process_grep_file` のシグネチャ乖離は機能設計書の更新で解決することが望ましい
