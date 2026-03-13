@@ -56,7 +56,8 @@
       "Bash(apt-get install -y xvfb libx11-6 libxext6 libxrender1 libxtst6 libxi6 2>&1 | tail -5)",
       "Bash(/workspaces/claude-code-book-chapter8-main/.steering/20260308-拡張ロードマップ/design.md:*)",
       "Bash(/workspaces/claude-code-book-chapter8-main/.steering/20260308-拡張ロードマップ/tasklist.md:*)",
-      "Bash(mkdir -p /workspaces/claude-code-book-chapter8-main/.steering/20260313-p2-features && touch /workspaces/claude-code-book-chapter8-main/.steering/20260313-p2-features/requirements.md /workspaces/claude-code-book-chapter8-main/.steering/20260313-p2-features/design.md /workspaces/claude-code-book-chapter8-main/.steering/20260313-p2-features/tasklist.md && echo \"Created\")"
+      "Bash(mkdir -p /workspaces/claude-code-book-chapter8-main/.steering/20260313-p2-features && touch /workspaces/claude-code-book-chapter8-main/.steering/20260313-p2-features/requirements.md /workspaces/claude-code-book-chapter8-main/.steering/20260313-p2-features/design.md /workspaces/claude-code-book-chapter8-main/.steering/20260313-p2-features/tasklist.md && echo \"Created\")",
+      "Bash(ls /workspaces/grep_helper/.claude/ 2>/dev/null && cat /workspaces/grep_helper/.claude/*.md 2>/dev/null || echo \"No .claude files\")"
     ]
   }
 }
