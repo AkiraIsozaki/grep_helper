@@ -85,8 +85,9 @@ class GrepRecord:
 ```python
 @dataclass
 class ProcessStats:
-    total_lines:    int = 0   # 総入力行数
-    valid_lines:    int = 0   # 有効行数（パース成功）
+    total_lines:    int = 0   # grep結果ファイルから読み込んだ総行数（コメント行含む）
+    valid_lines:    int = 0   # パース成功行数。total_lines = valid_lines + skipped_lines が常に成立
+                              # ※ 間接参照・getter経由で追加されたレコードはカウント対象外
     skipped_lines:  int = 0   # スキップ行数（バイナリ通知・空行・不正形式）
     fallback_files: list[str] = field(default_factory=list)  # ASTフォールバックしたファイル
     encoding_errors: list[str] = field(default_factory=list) # エンコーディングエラーのファイル
@@ -203,6 +204,12 @@ def classify_usage_regex(code: str) -> str:
 
 **インターフェース**:
 ```python
+def determine_scope(usage_type: str, code: str) -> str:
+    """変数の種類に応じた追跡スコープを返す。
+    Returns: "project"（定数）/ "class"（フィールド）/ "method"（ローカル変数）
+    詳細なロジックはアルゴリズム設計セクションを参照。
+    """
+
 def extract_variable_name(code: str, usage_type: str) -> str | None:
     """定数/変数の名前をコード行から抽出する。"""
 
@@ -269,6 +276,9 @@ def write_tsv(records: list[GrepRecord], output_path: Path) -> None:
     ヘッダー: 文言,参照種別,使用タイプ,ファイルパス,行番号,コード行,
               参照元変数名,参照元ファイル,参照元行番号
     エンコード: utf-8-sig（Excel対応BOM付き）
+    ソート実装: lineno は str 型のため int() 変換して数値ソートすること。
+        records.sort(key=lambda r: (r.keyword, r.filepath, int(r.lineno)))
+        ※ str ソートのまま実装すると "10" < "9" になるバグが発生する
     """
 ```
 
@@ -315,7 +325,8 @@ def print_report(stats: ProcessStats, processed_files: list[str]) -> None:
 - プロセス全体で共有するモジュールレベルのdict
 
 ```python
-# モジュールレベルで定義
+# モジュールレベルで定義。シングルスレッド専用。
+# 並列処理を導入する場合はスレッドロックが必要。
 _ast_cache: dict[str, object | None] = {}
 # None = パースエラーが発生したファイル（フォールバック対象）
 ```
@@ -423,12 +434,19 @@ def find_getter_names(field_name: str, class_file: Path, ast_cache: dict) -> lis
     ast_cache を利用してファイルを再解析しない。
     """
     candidates = []
-    # 方式1: 命名規則
+    # 方式1: 命名規則（field_name="type" → "getType"）
     getter_by_convention = "get" + field_name[0].upper() + field_name[1:]
     candidates.append(getter_by_convention)
     # 方式2: ASTからreturn文を解析（javalangのAST walk）
-    # class_file を ast_cache 経由で取得し、メソッドのreturn文を検索
-    # ... javalang AST走査でメソッドのreturn文を検索 ...
+    tree = ast_cache.get(str(class_file))
+    if tree:
+        for _, method_decl in tree.filter(javalang.tree.MethodDeclaration):
+            for _, stmt in method_decl.filter(javalang.tree.ReturnStatement):
+                # `return field_name;` のパターンを検出
+                if (stmt.expression is not None
+                        and hasattr(stmt.expression, 'member')
+                        and stmt.expression.member == field_name):
+                    candidates.append(method_decl.name)
     return list(set(candidates))
 ```
 
@@ -500,6 +518,8 @@ TARGET	直接	条件判定	Validator.java	80	if (x.equals("TARGET")) {
 | エラー種別 | 処理 | ユーザーへの表示 |
 |-----------|------|-----------------|
 | `--source-dir` 未指定 | exit code 1 | `エラー: --source-dir は必須です` (stderr) |
+| `--source-dir` 不在/非ディレクトリ | exit code 1 | `エラー: --source-dir で指定したディレクトリが存在しません: [パス]` (stderr) |
+| `--input-dir` 不在/非ディレクトリ | exit code 1 | `エラー: --input-dir で指定したディレクトリが存在しません: [パス]` (stderr) |
 | `input/` が空/不在 | exit code 1 | `エラー: input/ディレクトリにgrep結果ファイルがありません` (stderr) |
 | バイナリ通知行 | スキップ・`stats.skipped_lines++` | 処理完了後サマリに件数記録 |
 | ASTパースエラー | 正規表現フォールバック・`stats.fallback_files.append(...)` | 処理完了後サマリに記録 |
