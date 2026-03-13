@@ -24,7 +24,7 @@
 - 「タスクを追加する」: 新しいタスクをシステムに登録する
 - 「タスクを完了する」: タスクのステータスを完了に変更する
 
-**データモデル**: `src/main/java/com/linalgpad/model/Task.java`
+**データモデル**: `src/[モジュール名]/[モデルファイル]`
 ```
 
 ### 2. 具体例を含める
@@ -47,11 +47,11 @@
 - LOW: 期限が1週間以上先、または期限なし
 
 **使用例**:
-```java
-Task task = new Task.Builder()
-    .title("セキュリティ脆弱性の修正")
-    .priority(Priority.HIGH) // 緊急対応が必要
-    .build();
+```python
+task = Task(
+    title="セキュリティ脆弱性の修正",
+    priority=Priority.HIGH,  # 緊急対応が必要
+)
 ```
 ```
 

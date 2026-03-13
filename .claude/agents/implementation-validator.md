@@ -145,12 +145,12 @@ model: sonnet
 **問題1**: [問題の説明]
 - **ファイル**: `[ファイルパス]:[行番号]`
 - **問題のコード**:
-```java
+```python
 [問題のあるコード]
 ```
 - **理由**: [なぜ問題か]
 - **修正案**:
-```java
+```python
 [修正後のコード]
 ```
 
@@ -199,55 +199,57 @@ model: sonnet
 
 ### テスト実行
 ```bash
-./gradlew test
+.venv/bin/python -m pytest
+# または
+.venv/bin/python -m unittest discover
 ```
 
-### ビルド確認
+### 構文チェック
 ```bash
-./gradlew build
+.venv/bin/python -m py_compile analyze.py
 ```
 
 ### コード品質チェック（該当する場合）
 ```bash
-./gradlew check
+.venv/bin/python -m flake8 .
 ```
 
 ## コード品質の詳細チェック
 
 ### 命名規則
 
-**変数・メソッド**:
-```java
-// ✅ 良い例
-private final List<Matrix> storedMatrices = new ArrayList<>();
-public Fraction calculateTotal(List<Fraction> values) { }
+**変数・関数**:
+```python
+# ✅ 良い例
+stored_records: list[dict] = []
+def calculate_total(values: list[float]) -> float: ...
 
-// ❌ 悪い例
-private final List<Matrix> data = new ArrayList<>();
-public Fraction calc(List<Fraction> arr) { }
+# ❌ 悪い例
+data: list = []
+def calc(arr): ...
 ```
 
-**クラス・インターフェース**:
-```java
-// ✅ 良い例
-public class MatrixService { }
-public interface MatrixRepository { }
+**クラス**:
+```python
+# ✅ 良い例
+class GrepAnalyzer: ...
+class UsageClassifier: ...
 
-// ❌ 悪い例
-public class Manager { }  // 曖昧
-public interface IData { }  // 意味不明
+# ❌ 悪い例
+class Manager: ...  # 曖昧
+class Data: ...     # 意味不明
 ```
 
 ### 関数設計
 
 **単一責務の原則**:
-```java
-// ✅ 良い例: 単一の責務
-public Fraction calculateDeterminant(Matrix matrix) { }
-public String formatLatex(Matrix matrix) { }
+```python
+# ✅ 良い例: 単一の責務
+def parse_grep_line(line: str) -> dict | None: ...
+def classify_usage(code: str) -> str: ...
 
-// ❌ 悪い例: 複数の責務
-public String calculateAndFormatDeterminant(Matrix matrix) { }
+# ❌ 悪い例: 複数の責務
+def parse_and_classify_line(line: str) -> str: ...
 ```
 
 **関数の長さ**:
@@ -258,89 +260,74 @@ public String calculateAndFormatDeterminant(Matrix matrix) { }
 ### エラーハンドリング
 
 **適切なエラー処理**:
-```java
-// ✅ 良い例
-public Matrix add(Matrix other) {
-    if (this.rows != other.rows || this.cols != other.cols) {
-        throw new IllegalArgumentException(
-            String.format("行列のサイズが一致しません（A: %dx%d, B: %dx%d）",
-                this.rows, this.cols, other.rows, other.cols));
-    }
-    // 演算処理
-}
+```python
+# ✅ 良い例
+def parse_grep_line(line: str) -> dict | None:
+    parts = re.split(r':(\d+):', line.rstrip(), maxsplit=1)
+    if len(parts) != 3:
+        return None  # 不正行はNoneで呼び出し元に通知
+    filepath, lineno, code = parts
+    return {"filepath": filepath, "lineno": lineno, "code": code}
 
-// ❌ 悪い例: エラーを無視
-public Matrix add(Matrix other) {
-    try {
-        // 演算処理
-    } catch (Exception e) {
-        return null;  // エラー情報が失われる
-    }
-}
+# ❌ 悪い例: 例外を握りつぶす
+def parse_grep_line(line: str) -> dict | None:
+    try:
+        ...
+    except Exception:
+        return None  # エラー情報が失われる
 ```
 
 ## セキュリティチェックリスト
 
 ### 入力検証
 
-```java
-// ✅ 良い例
-public Fraction parseInput(String input) {
-    if (input == null || input.isBlank()) {
-        throw new IllegalArgumentException("入力値は必須です");
-    }
-    // パース処理
-}
+```python
+# ✅ 良い例
+def validate_input_dir(path: Path) -> None:
+    if not path.exists():
+        raise ValueError(f"入力ディレクトリが存在しません: {path}")
+    if not path.is_dir():
+        raise ValueError(f"ディレクトリではありません: {path}")
 
-// ❌ 悪い例: 検証なし
-public Fraction parseInput(String input) {
-    // 検証なし
-}
+# ❌ 悪い例: 検証なし
+def validate_input_dir(path: Path) -> None:
+    pass
 ```
 
 ### ファイルサイズ制限
 
-```java
-// ✅ 良い例
-public MatrixFileData load(File file) {
-    if (file.length() > 10 * 1024 * 1024) {
-        throw new IllegalArgumentException("ファイルサイズが10MBを超えています");
-    }
-    // 読み込み処理
-}
+```python
+# ✅ 良い例
+def load_grep_file(path: Path) -> list[str]:
+    if path.stat().st_size > 500 * 1024 * 1024:  # 500MB
+        raise ValueError(f"ファイルサイズが大きすぎます: {path}")
+    return path.read_text(encoding="utf-8", errors="replace").splitlines()
 ```
 
 ## パフォーマンスチェックリスト
 
 ### データ構造の選択
 
-```java
-// ✅ 良い例: O(1) アクセス
-Map<String, Matrix> matrixMap = new HashMap<>();
-Matrix matrix = matrixMap.get(name);
+```python
+# ✅ 良い例: dictでO(1)アクセス
+ast_cache: dict[str, object] = {}
+tree = ast_cache.get(filepath)
 
-// ❌ 悪い例: O(n) 検索
-List<Matrix> matrices = new ArrayList<>();
-Matrix matrix = matrices.stream()
-    .filter(m -> m.getName().equals(name))
-    .findFirst().orElse(null);
+# ❌ 悪い例: listでO(n)検索
+cached = [c for c in cache_list if c["path"] == filepath]
 ```
 
 ### イミュータブル設計
 
-```java
-// ✅ 良い例: イミュータブルなFraction
-public class Fraction {
-    private final long numerator;
-    private final long denominator;
-
-    public Fraction add(Fraction other) {
-        return Fraction.of(
-            this.numerator * other.denominator + other.numerator * this.denominator,
-            this.denominator * other.denominator
-        );
-    }
-}
+```python
+# ✅ 良い例: dataclassでイミュータブルなレコード
+@dataclass(frozen=True)
+class GrepRecord:
+    keyword: str
+    usage_type: str
+    filepath: str
+    lineno: str
+    code: str
 ```
 
 ## 検証の姿勢

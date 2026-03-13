@@ -5,7 +5,7 @@
 ```mermaid
 graph TB
     User[ユーザー]
-    UI[UIレイヤー / JavaFX]
+    UI[UIレイヤー / CLI]
     Service[サービスレイヤー]
     Data[データレイヤー]
 
@@ -27,16 +27,14 @@ graph TB
 
 ### エンティティ: [エンティティ名]
 
-```java
-public class [EntityName] {
-    private String id;                    // UUID
-    private [Type] [field1];              // [説明]
-    private [Type] [field2];              // [説明]
-    private LocalDateTime createdAt;      // 作成日時
-    private LocalDateTime updatedAt;      // 更新日時
-
-    // コンストラクタ、getter、setter
-}
+```python
+@dataclass
+class [EntityName]:
+    id: str                    # UUID
+    [field1]: [Type]           # [説明]
+    [field2]: [Type]           # [説明]
+    created_at: datetime       # 作成日時
+    updated_at: datetime       # 更新日時
 ```
 
 **制約**:
@@ -69,11 +67,10 @@ erDiagram
 - [責務2]
 
 **インターフェース**:
-```java
-public class [ComponentName] {
-    public [ReturnType] [method1]([ParamType] [param]);
-    public [ReturnType] [method2]([ParamType] [param]);
-}
+```python
+class [ComponentName]:
+    def [method1](self, [param]: [ParamType]) -> [ReturnType]: ...
+    def [method2](self, [param]: [ParamType]) -> [ReturnType]: ...
 ```
 
 **依存関係**:
@@ -87,7 +84,7 @@ public class [ComponentName] {
 ```mermaid
 sequenceDiagram
     participant User
-    participant UI as JavaFX UI
+    participant UI as CLI
     participant Service
     participant Data
 
@@ -172,22 +169,23 @@ POST /api/[resource]
 - [分類3]: スコア < [閾値]
 
 **実装例**:
-```java
-public [ReturnType] [algorithmName]([ParamType] [param]) {
-    // ステップ1
-    int score1 = [calculation];
+```python
+def [algorithm_name](self, [param]: [ParamType]) -> [ReturnType]:
+    # ステップ1
+    score1 = [calculation]
 
-    // ステップ2
-    int score2 = [calculation];
+    # ステップ2
+    score2 = [calculation]
 
-    // 総合スコア
-    double totalScore = (score1 * weight1) + (score2 * weight2);
+    # 総合スコア
+    total_score = (score1 * weight1) + (score2 * weight2)
 
-    // 分類
-    if (totalScore >= threshold1) return [分類1];
-    if (totalScore >= threshold2) return [分類2];
-    return [分類3];
-}
+    # 分類
+    if total_score >= threshold1:
+        return [分類1]
+    if total_score >= threshold2:
+        return [分類2]
+    return [分類3]
 ```
 
 ## UI設計（該当する場合）

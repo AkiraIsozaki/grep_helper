@@ -1,651 +1,464 @@
 # 実装ガイド (Implementation Guide)
 
-## Java 規約
+## Python 規約
 
 ### 型定義
 
-**標準ライブラリの型を使用**:
-```java
-// 良い例: 標準ライブラリの型を使用
-public Map<String, Integer> processItems(List<String> items) {
-    Map<String, Integer> counts = new HashMap<>();
-    for (String item : items) {
-        counts.merge(item, 1, Integer::sum);
-    }
-    return counts;
-}
+**型ヒントを使用**:
+```python
+# 良い例: 型ヒントで意図を明確に
+def process_items(items: list[str]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for item in items:
+        counts[item] = counts.get(item, 0) + 1
+    return counts
 
-// 悪い例: 生の型を使用
-public Map processItems(List items) {  // 型安全性が失われる
-    // ...
-}
+# 悪い例: 型ヒントなし（意図が不明）
+def process_items(items):
+    counts = {}
+    for item in items:
+        counts[item] = counts.get(item, 0) + 1
+    return counts
 ```
 
-**型注釈の原則**:
-```java
-// 良い例: 明示的な型を使用
-public double calculateTotal(List<Double> prices) {
-    return prices.stream()
-        .mapToDouble(Double::doubleValue)
-        .sum();
-}
+**型エイリアスの活用**:
+```python
+# 複雑な型には型エイリアスを定義
+from typing import TypeAlias
 
-// 悪い例: varの多用で可読性が低下
-public double calculateTotal(var prices) {  // コンパイルエラー（メソッド引数にvarは使えない）
-    // ...
-}
+GrepRecord: TypeAlias = dict[str, str]
+UsageType: TypeAlias = str
 ```
 
-**インターフェース vs クラス vs enum**:
-```java
-// インターフェース: 振る舞いの抽象化
-public interface Task {
-    String getId();
-    String getTitle();
-    boolean isCompleted();
-}
+**dataclassの活用**:
+```python
+from dataclasses import dataclass
 
-// クラスによる拡張
-public class ExtendedTask implements Task {
-    private final String id;
-    private final String title;
-    private final boolean completed;
-    private final String priority;
+# データクラス: 不変データキャリア
+@dataclass(frozen=True)
+class GrepRecord:
+    keyword: str
+    usage_type: str
+    filepath: str
+    lineno: str
+    code: str
 
-    // コンストラクタ、ゲッター省略
-}
+# Enum: 固定の選択肢
+from enum import Enum
 
-// enum: 固定の選択肢
-public enum TaskStatus {
-    TODO, IN_PROGRESS, COMPLETED
-}
-
-// record (Java 16+): 不変データキャリア
-public record TaskId(String value) {}
+class UsageType(Enum):
+    CONSTANT = "定数定義"
+    VARIABLE = "変数代入"
+    CONDITION = "条件判定"
+    RETURN = "return文"
+    ARGUMENT = "メソッド引数"
+    ANNOTATION = "アノテーション"
+    OTHER = "その他"
 ```
 
 ### 命名規則
 
-**変数・メソッド**:
-```java
-// 変数: camelCase、名詞
-final String userName = "John";
-final List<Task> taskList = new ArrayList<>();
-final boolean isCompleted = true;
+**変数・関数**:
+```python
+# 変数: snake_case、名詞
+user_name = "John"
+task_list: list[str] = []
+is_completed = True
 
-// メソッド: camelCase、動詞で始める
-public UserData fetchUserData() { }
-public boolean validateEmail(String email) { }
-public double calculateTotalPrice(List<Item> items) { }
+# 関数: snake_case、動詞で始める
+def fetch_user_data() -> dict: ...
+def validate_email(email: str) -> bool: ...
+def calculate_total_price(items: list) -> float: ...
 
-// Boolean: is, has, should, canで始める
-final boolean isValid = true;
-final boolean hasPermission = false;
-final boolean shouldRetry = true;
-final boolean canDelete = false;
+# Boolean: is_, has_, should_, can_ で始める
+is_valid = True
+has_permission = False
+should_retry = True
+can_delete = False
 ```
 
-**クラス・インターフェース**:
-```java
-// クラス: PascalCase、名詞
-public class TaskManager { }
-public class UserAuthenticationService { }
+**クラス・定数**:
+```python
+# クラス: PascalCase、名詞
+class GrepAnalyzer: ...
+class UsageClassifier: ...
 
-// インターフェース: PascalCase
-public interface TaskRepository { }
-public interface UserProfile { }
-
-// enum: PascalCase、定数はUPPER_SNAKE_CASE
-public enum TaskStatus {
-    TODO, IN_PROGRESS, COMPLETED
-}
-```
-
-**定数**:
-```java
-// UPPER_SNAKE_CASE
-public static final int MAX_RETRY_COUNT = 3;
-public static final String API_BASE_URL = "https://api.example.com";
-public static final long DEFAULT_TIMEOUT = 5000L;
-
-// 設定クラスの場合
-public final class AppConfig {
-    public static final int MAX_RETRY_COUNT = 3;
-    public static final String API_BASE_URL = "https://api.example.com";
-    public static final long DEFAULT_TIMEOUT = 5000L;
-
-    private AppConfig() {} // インスタンス化を防止
-}
+# 定数: UPPER_SNAKE_CASE
+MAX_RETRY_COUNT = 3
+API_BASE_URL = "https://api.example.com"
+DEFAULT_TIMEOUT = 5000
 ```
 
 **ファイル名**:
-```java
-// クラスファイル: PascalCase（クラス名と一致）
-// TaskService.java
-// UserRepository.java
+```
+# モジュール: snake_case
+analyze.py
+usage_classifier.py
+grep_parser.py
 
-// インターフェース: PascalCase
-// TaskRepository.java
-
-// enum: PascalCase
-// TaskStatus.java
-
-// テストクラス: クラス名 + Test
-// TaskServiceTest.java
-// UserRepositoryTest.java
+# テストファイル: test_ プレフィックス
+test_analyze.py
+test_usage_classifier.py
 ```
 
 ### メソッド設計
 
 **単一責務の原則**:
-```java
-// 良い例: 単一の責務
-public double calculateTotalPrice(List<CartItem> items) {
-    return items.stream()
-        .mapToDouble(item -> item.getPrice() * item.getQuantity())
-        .sum();
-}
+```python
+# 良い例: 単一の責務
+def calculate_total_price(items: list[dict]) -> float:
+    return sum(item["price"] * item["quantity"] for item in items)
 
-public String formatPrice(double amount) {
-    return String.format("¥%,.0f", amount);
-}
+def format_price(amount: float) -> str:
+    return f"¥{amount:,.0f}"
 
-// 悪い例: 複数の責務
-public String calculateAndFormatPrice(List<CartItem> items) {
-    double total = items.stream()
-        .mapToDouble(item -> item.getPrice() * item.getQuantity())
-        .sum();
-    return String.format("¥%,.0f", total);
-}
+# 悪い例: 複数の責務
+def calculate_and_format_price(items: list[dict]) -> str:
+    total = sum(item["price"] * item["quantity"] for item in items)
+    return f"¥{total:,.0f}"
 ```
 
-**メソッドの長さ**:
+**関数の長さ**:
 - 目標: 20行以内
 - 推奨: 50行以内
 - 100行以上: リファクタリングを検討
 
 **パラメータの数**:
-```java
-// 良い例: パラメータオブジェクトでまとめる
-public record CreateTaskOptions(
-    String title,
-    String description,
-    TaskPriority priority,
-    LocalDate dueDate
-) {
-    // descriptionとpriorityとdueDateをOptionalにしたい場合はBuilderパターンを使用
-}
+```python
+# 良い例: dataclassでまとめる
+@dataclass
+class CreateTaskOptions:
+    title: str
+    description: str = ""
+    priority: str = "MEDIUM"
+    due_date: str | None = None
 
-public Task createTask(CreateTaskOptions options) {
-    // 実装
-}
+def create_task(options: CreateTaskOptions) -> dict:
+    ...
 
-// 悪い例: パラメータが多すぎる
-public Task createTask(
-    String title,
-    String description,
-    String priority,
-    LocalDate dueDate,
-    List<String> tags,
-    String assignee
-) {
-    // 実装
-}
+# 悪い例: パラメータが多すぎる
+def create_task(title, description, priority, due_date, tags, assignee):
+    ...
 ```
 
 ### エラーハンドリング
 
 **カスタム例外クラス**:
-```java
-// 例外クラスの定義
-public class ValidationException extends RuntimeException {
-    private final String field;
-    private final Object value;
+```python
+class ValidationError(ValueError):
+    def __init__(self, message: str, field: str, value: object):
+        super().__init__(message)
+        self.field = field
+        self.value = value
 
-    public ValidationException(String message, String field, Object value) {
-        super(message);
-        this.field = field;
-        this.value = value;
-    }
-
-    public String getField() { return field; }
-    public Object getValue() { return value; }
-}
-
-public class NotFoundException extends RuntimeException {
-    private final String resource;
-    private final String id;
-
-    public NotFoundException(String resource, String id) {
-        super(resource + " not found: " + id);
-        this.resource = resource;
-        this.id = id;
-    }
-
-    public String getResource() { return resource; }
-    public String getId() { return id; }
-}
-
-public class DatabaseException extends RuntimeException {
-    public DatabaseException(String message, Throwable cause) {
-        super(message, cause);
-    }
-}
+class NotFoundException(Exception):
+    def __init__(self, resource: str, id: str):
+        super().__init__(f"{resource} not found: {id}")
+        self.resource = resource
+        self.id = id
 ```
 
 **エラーハンドリングパターン**:
-```java
-// 良い例: 適切なエラーハンドリング
-public Task getTask(String id) {
-    try {
-        Optional<Task> task = repository.findById(id);
+```python
+# 良い例: 適切なエラーハンドリング
+def get_task(task_id: str) -> dict:
+    task = repository.find_by_id(task_id)
+    if task is None:
+        raise NotFoundException("Task", task_id)
+    return task
 
-        return task.orElseThrow(
-            () -> new NotFoundException("Task", id)
-        );
-    } catch (NotFoundException e) {
-        // 予期される例外: 適切に処理
-        logger.warn("タスクが見つかりません: {}", id);
-        throw e;
-    } catch (Exception e) {
-        // 予期しない例外: ラップして上位に伝播
-        throw new DatabaseException("タスクの取得に失敗しました", e);
-    }
-}
-
-// 悪い例: 例外を無視
-public Task getTask(String id) {
-    try {
-        return repository.findById(id).orElse(null);
-    } catch (Exception e) {
-        return null; // エラー情報が失われる
-    }
-}
+# 悪い例: 例外を握りつぶす
+def get_task(task_id: str) -> dict | None:
+    try:
+        return repository.find_by_id(task_id)
+    except Exception:
+        return None  # エラー情報が失われる
 ```
 
 **エラーメッセージ**:
-```java
-// 良い例: 具体的で解決策を示す
-throw new ValidationException(
-    "タイトルは1-200文字で入力してください。現在の文字数: " + title.length(),
-    "title",
-    title
-);
+```python
+# 良い例: 具体的で解決策を示す
+raise ValidationError(
+    f"タイトルは1-200文字で入力してください。現在の文字数: {len(title)}",
+    field="title",
+    value=title,
+)
 
-// 悪い例: 曖昧で役に立たない
-throw new IllegalArgumentException("Invalid input");
+# 悪い例: 曖昧で役に立たない
+raise ValueError("Invalid input")
 ```
 
 ### 並行処理
 
-**CompletableFutureの使用**:
-```java
-// 良い例: CompletableFutureで非同期処理
-public CompletableFuture<List<Task>> fetchUserTasks(String userId) {
-    return CompletableFuture.supplyAsync(() -> {
-        User user = userRepository.findById(userId)
-            .orElseThrow(() -> new NotFoundException("User", userId));
-        return taskRepository.findByUserId(user.getId());
-    }).exceptionally(e -> {
-        logger.error("タスクの取得に失敗", e);
-        throw new RuntimeException(e);
-    });
-}
+**concurrent.futuresの使用**:
+```python
+from concurrent.futures import ThreadPoolExecutor
 
-// 同期処理で十分な場合はシンプルに
-public List<Task> fetchUserTasks(String userId) {
-    User user = userRepository.findById(userId)
-        .orElseThrow(() -> new NotFoundException("User", userId));
-    return taskRepository.findByUserId(user.getId());
-}
-```
+# 良い例: ThreadPoolExecutorで並列処理
+def fetch_multiple_users(ids: list[str]) -> list[dict]:
+    with ThreadPoolExecutor() as executor:
+        results = list(executor.map(repository.find_by_id, ids))
+    return [r for r in results if r is not None]
 
-**並列処理**:
-```java
-// 良い例: parallelStreamまたはCompletableFutureで並列実行
-public List<User> fetchMultipleUsers(List<String> ids) {
-    List<CompletableFuture<User>> futures = ids.stream()
-        .map(id -> CompletableFuture.supplyAsync(
-            () -> userRepository.findById(id).orElseThrow()
-        ))
-        .toList();
-
-    return futures.stream()
-        .map(CompletableFuture::join)
-        .toList();
-}
-
-// 悪い例: 逐次実行（必要がないのに直列処理）
-public List<User> fetchMultipleUsers(List<String> ids) {
-    List<User> users = new ArrayList<>();
-    for (String id : ids) {
-        User user = userRepository.findById(id).orElseThrow(); // 遅い
-        users.add(user);
-    }
-    return users;
-}
+# 同期処理で十分な場合はシンプルに
+def fetch_multiple_users(ids: list[str]) -> list[dict]:
+    return [repository.find_by_id(id) for id in ids if repository.find_by_id(id)]
 ```
 
 ## コメント規約
 
 ### ドキュメントコメント
 
-**Javadoc形式**:
-```java
-/**
- * タスクを作成する。
- *
- * <p>指定されたデータに基づいて新しいタスクを作成し、
- * リポジトリに永続化する。</p>
- *
- * @param data 作成するタスクのデータ
- * @return 作成されたタスク
- * @throws ValidationException データが不正な場合
- * @throws DatabaseException データベースエラーの場合
- *
- * <pre>{@code
- * Task task = service.createTask(new CreateTaskData(
- *     "新しいタスク",
- *     TaskPriority.HIGH
- * ));
- * }</pre>
- */
-public Task createTask(CreateTaskData data) {
-    // 実装
-}
+**docstring形式**:
+```python
+def create_task(data: CreateTaskOptions) -> dict:
+    """タスクを作成する。
+
+    指定されたデータに基づいて新しいタスクを作成し、
+    リポジトリに永続化する。
+
+    Args:
+        data: 作成するタスクのデータ
+
+    Returns:
+        作成されたタスク辞書
+
+    Raises:
+        ValidationError: データが不正な場合
+    """
+    ...
 ```
 
 ### インラインコメント
 
 **良いコメント**:
-```java
-// 理由を説明
-// キャッシュを無効化して最新データを取得
-cache.clear();
+```python
+# 理由を説明
+# キャッシュを無効化して最新データを取得
+cache.clear()
 
-// 複雑なロジックを説明
-// Kadaneのアルゴリズムで最大部分配列和を計算
-// 時間計算量: O(n)
-double maxSoFar = arr[0];
-double maxEndingHere = arr[0];
+# 複雑なロジックを説明
+# Kadaneのアルゴリズムで最大部分配列和を計算
+# 時間計算量: O(n)
+max_so_far = arr[0]
+max_ending_here = arr[0]
 
-// TODO・FIXMEを活用
-// TODO: キャッシュ機能を実装 (Issue #123)
-// FIXME: 大量データでパフォーマンス劣化 (Issue #456)
-// HACK: 一時的な回避策、後でリファクタリング必要
+# TODO・FIXMEを活用
+# TODO: キャッシュ機能を実装 (Issue #123)
+# FIXME: 大量データでパフォーマンス劣化 (Issue #456)
 ```
 
 **悪いコメント**:
-```java
-// コードの内容を繰り返すだけ
-// iを1増やす
-i++;
+```python
+# コードの内容を繰り返すだけ
+# iを1増やす
+i += 1
 
-// 古い情報
-// このコードは2020年に追加された (不要な情報)
-
-// コメントアウトされたコード
-// OldImplementation old = new OldImplementation();  // 削除すべき
+# コメントアウトされたコード（削除すべき）
+# old_implementation = OldClass()
 ```
 
 ## セキュリティ
 
 ### 入力検証
 
-```java
-// 良い例: 厳密な検証
-public void validateEmail(String email) {
-    if (email == null || email.isBlank()) {
-        throw new ValidationException("メールアドレスは必須です", "email", email);
-    }
+```python
+# 良い例: 厳密な検証
+import re
 
-    String emailRegex = "^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$";
-    if (!email.matches(emailRegex)) {
-        throw new ValidationException("メールアドレスの形式が不正です", "email", email);
-    }
+def validate_email(email: str) -> None:
+    if not email or not email.strip():
+        raise ValidationError("メールアドレスは必須です", "email", email)
 
-    if (email.length() > 254) {
-        throw new ValidationException("メールアドレスが長すぎます", "email", email);
-    }
-}
+    pattern = r'^[^\s@]+@[^\s@]+\.[^\s@]+$'
+    if not re.match(pattern, email):
+        raise ValidationError("メールアドレスの形式が不正です", "email", email)
 
-// 悪い例: 検証なし
-public void validateEmail(String email) {
-    // 検証なし
-}
+    if len(email) > 254:
+        raise ValidationError("メールアドレスが長すぎます", "email", email)
+
+# 悪い例: 検証なし
+def validate_email(email: str) -> None:
+    pass
 ```
 
 ### 機密情報の管理
 
-```java
-// 良い例: 環境変数から読み込み
-String apiKey = System.getenv("API_KEY");
-if (apiKey == null || apiKey.isBlank()) {
-    throw new IllegalStateException("API_KEY環境変数が設定されていません");
-}
+```python
+# 良い例: 環境変数から読み込み
+import os
 
-// 悪い例: ハードコード
-String apiKey = "sk-1234567890abcdef"; // 絶対にしない！
+api_key = os.environ.get("API_KEY")
+if not api_key:
+    raise EnvironmentError("API_KEY環境変数が設定されていません")
+
+# 悪い例: ハードコード
+api_key = "sk-1234567890abcdef"  # 絶対にしない！
 ```
 
 ## パフォーマンス
 
 ### データ構造の選択
 
-```java
-// 良い例: MapでO(1)アクセス
-Map<String, User> userMap = users.stream()
-    .collect(Collectors.toMap(User::getId, Function.identity()));
-User user = userMap.get(userId); // O(1)
+```python
+# 良い例: dictでO(1)アクセス
+user_map = {user["id"]: user for user in users}
+user = user_map.get(user_id)  # O(1)
 
-// 悪い例: ListでO(n)検索
-User user = users.stream()
-    .filter(u -> u.getId().equals(userId))
-    .findFirst()
-    .orElse(null); // O(n)
+# 悪い例: listでO(n)検索
+user = next((u for u in users if u["id"] == user_id), None)  # O(n)
 ```
 
 ### ループの最適化
 
-```java
-// 良い例: 拡張for文を使用
-for (Item item : items) {
-    process(item);
-}
+```python
+# 良い例: リスト内包表記
+active_items = [item for item in items if item["is_active"]]
 
-// 良い例: Stream APIを活用
-items.stream()
-    .filter(Item::isActive)
-    .forEach(this::process);
+# 良い例: ジェネレータ（大量データ）
+def process_large_file(path: Path):
+    with open(path, encoding="utf-8") as f:
+        for line in f:  # 1行ずつ読み込み（メモリ効率良）
+            yield process_line(line)
 
-// 悪い例: インデックスベースでsizeを毎回呼び出し（実際にはJITで最適化されるが意図が不明瞭）
-for (int i = 0; i < items.size(); i++) {
-    process(items.get(i));
-}
+# 悪い例: 不要なリスト生成
+result = list(filter(lambda x: x["is_active"], items))  # わかりにくい
 ```
 
 ### メモ化
 
-```java
-// 計算結果のキャッシュ
-private final Map<String, Result> cache = new ConcurrentHashMap<>();
+```python
+# 計算結果のキャッシュ
+from functools import lru_cache
 
-public Result expensiveCalculation(String input) {
-    return cache.computeIfAbsent(input, key -> {
-        // 重い計算
-        return doExpensiveWork(key);
-    });
-}
+@lru_cache(maxsize=None)
+def expensive_calculation(input: str) -> str:
+    # 重い計算
+    return do_expensive_work(input)
+
+# 辞書による手動キャッシュ（ミュータブルな引数の場合）
+_cache: dict[str, object] = {}
+
+def cached_parse(filepath: str) -> object:
+    if filepath not in _cache:
+        _cache[filepath] = parse_file(filepath)
+    return _cache[filepath]
 ```
 
 ## テストコード
 
-### テストの構造 (Given-When-Then)
+### テストの構造 (Arrange-Act-Assert)
 
-```java
-class TaskServiceTest {
+```python
+import unittest
 
-    private TaskRepository mockRepository;
-    private TaskService service;
+class TestGrepAnalyzer(unittest.TestCase):
 
-    @BeforeEach
-    void setUp() {
-        mockRepository = mock(TaskRepository.class);
-        service = new TaskService(mockRepository);
-    }
+    def setUp(self):
+        self.analyzer = GrepAnalyzer()
 
-    @Nested
-    @DisplayName("create メソッド")
-    class Create {
+    def test_parse_valid_line(self):
+        # Arrange: 準備
+        line = "src/main/java/Foo.java:42:    String msg = \"ERROR\";"
 
-        @Test
-        @DisplayName("正常なデータでタスクを作成できる")
-        void createsTaskWithValidData() {
-            // Given: 準備
-            CreateTaskData taskData = new CreateTaskData(
-                "テストタスク",
-                "テスト用の説明"
-            );
-            when(mockRepository.save(any(Task.class)))
-                .thenAnswer(invocation -> invocation.getArgument(0));
+        # Act: 実行
+        result = self.analyzer.parse_grep_line(line)
 
-            // When: 実行
-            Task result = service.create(taskData);
+        # Assert: 検証
+        self.assertIsNotNone(result)
+        self.assertEqual(result["filepath"], "src/main/java/Foo.java")
+        self.assertEqual(result["lineno"], "42")
+        self.assertIn("msg", result["code"])
 
-            // Then: 検証
-            assertNotNull(result);
-            assertNotNull(result.getId());
-            assertEquals("テストタスク", result.getTitle());
-            assertEquals("テスト用の説明", result.getDescription());
-            assertNotNull(result.getCreatedAt());
-        }
+    def test_parse_invalid_line_returns_none(self):
+        # Arrange: 準備
+        line = "Binary file matches"
 
-        @Test
-        @DisplayName("タイトルが空の場合ValidationExceptionをスローする")
-        void throwsWhenTitleIsEmpty() {
-            // Given: 準備
-            CreateTaskData invalidData = new CreateTaskData("", null);
+        # Act: 実行
+        result = self.analyzer.parse_grep_line(line)
 
-            // When/Then: 実行と検証
-            assertThrows(ValidationException.class,
-                () -> service.create(invalidData)
-            );
-        }
-    }
-}
+        # Assert: 検証
+        self.assertIsNone(result)
 ```
 
 ### モックの作成
 
-```java
-// 良い例: Mockitoを使用したモック
-@ExtendWith(MockitoExtension.class)
-class TaskServiceTest {
+```python
+from unittest.mock import patch, MagicMock
 
-    @Mock
-    private TaskRepository mockRepository;
+class TestGrepAnalyzer(unittest.TestCase):
 
-    @InjectMocks
-    private TaskService service;
+    @patch("analyze.open", new_callable=MagicMock)
+    def test_process_file(self, mock_open):
+        # ファイル読み込みをモック
+        mock_open.return_value.__enter__.return_value = [
+            "src/Foo.java:10:    public static final String CODE = \"VALUE\";",
+        ]
 
-    @Test
-    void findExistingTask() {
-        // テストごとに動作を設定
-        Task mockTask = new Task("existing-id", "テストタスク");
-        when(mockRepository.findById("existing-id"))
-            .thenReturn(Optional.of(mockTask));
-        when(mockRepository.findById("non-existing-id"))
-            .thenReturn(Optional.empty());
+        records = process_file(Path("input/VALUE.grep"), "VALUE")
 
-        // 実行と検証
-        Task found = service.getTask("existing-id");
-        assertEquals("テストタスク", found.getTitle());
-
-        assertThrows(NotFoundException.class,
-            () -> service.getTask("non-existing-id")
-        );
-    }
-}
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]["usage_type"], "定数定義")
 ```
 
 ## リファクタリング
 
 ### マジックナンバーの排除
 
-```java
-// 良い例: 定数を定義
-private static final int MAX_RETRY_COUNT = 3;
-private static final long RETRY_DELAY_MS = 1000L;
+```python
+# 良い例: 定数を定義
+MAX_RETRY_COUNT = 3
+RETRY_DELAY_SEC = 1.0
 
-public Data fetchWithRetry() throws InterruptedException {
-    for (int i = 0; i < MAX_RETRY_COUNT; i++) {
-        try {
-            return fetchData();
-        } catch (Exception e) {
-            if (i < MAX_RETRY_COUNT - 1) {
-                Thread.sleep(RETRY_DELAY_MS);
-            }
-        }
-    }
-    throw new RuntimeException("最大リトライ回数を超過しました");
-}
+def fetch_with_retry() -> dict:
+    for i in range(MAX_RETRY_COUNT):
+        try:
+            return fetch_data()
+        except Exception:
+            if i < MAX_RETRY_COUNT - 1:
+                time.sleep(RETRY_DELAY_SEC)
+    raise RuntimeError("最大リトライ回数を超過しました")
 
-// 悪い例: マジックナンバー
-public Data fetchWithRetry() throws InterruptedException {
-    for (int i = 0; i < 3; i++) {
-        try {
-            return fetchData();
-        } catch (Exception e) {
-            if (i < 2) {
-                Thread.sleep(1000);
-            }
-        }
-    }
-    throw new RuntimeException("失敗");
-}
+# 悪い例: マジックナンバー
+def fetch_with_retry() -> dict:
+    for i in range(3):
+        try:
+            return fetch_data()
+        except Exception:
+            if i < 2:
+                time.sleep(1)
+    raise RuntimeError("失敗")
 ```
 
-### メソッドの抽出
+### 関数の抽出
 
-```java
-// 良い例: メソッドを抽出
-public void processOrder(Order order) {
-    validateOrder(order);
-    calculateTotal(order);
-    applyDiscounts(order);
-    saveOrder(order);
-}
+```python
+# 良い例: 関数を抽出
+def process_order(order: dict) -> None:
+    validate_order(order)
+    calculate_total(order)
+    apply_discounts(order)
+    save_order(order)
 
-private void validateOrder(Order order) {
-    if (order.getItems() == null || order.getItems().isEmpty()) {
-        throw new ValidationException("商品が選択されていません", "items", order.getItems());
-    }
-}
+def validate_order(order: dict) -> None:
+    if not order.get("items"):
+        raise ValidationError("商品が選択されていません", "items", order.get("items"))
 
-private void calculateTotal(Order order) {
-    double total = order.getItems().stream()
-        .mapToDouble(item -> item.getPrice() * item.getQuantity())
-        .sum();
-    order.setTotal(total);
-}
+def calculate_total(order: dict) -> None:
+    order["total"] = sum(
+        item["price"] * item["quantity"] for item in order["items"]
+    )
 
-// 悪い例: 長いメソッド
-public void processOrder(Order order) {
-    if (order.getItems() == null || order.getItems().isEmpty()) {
-        throw new ValidationException("商品が選択されていません", "items", order.getItems());
-    }
-
-    double total = order.getItems().stream()
-        .mapToDouble(item -> item.getPrice() * item.getQuantity())
-        .sum();
-    order.setTotal(total);
-
-    if (order.getCoupon() != null) {
-        order.setTotal(order.getTotal() - order.getTotal() * order.getCoupon().getDiscountRate());
-    }
-
-    repository.save(order);
-}
+# 悪い例: 長い関数
+def process_order(order: dict) -> None:
+    if not order.get("items"):
+        raise ValidationError("商品が選択されていません", "items", order.get("items"))
+    order["total"] = sum(
+        item["price"] * item["quantity"] for item in order["items"]
+    )
+    if order.get("coupon"):
+        order["total"] -= order["total"] * order["coupon"]["discount_rate"]
+    repository.save(order)
 ```
 
 ## チェックリスト
@@ -653,33 +466,33 @@ public void processOrder(Order order) {
 実装完了前に確認:
 
 ### コード品質
-- [ ] 命名が明確で一貫している
-- [ ] メソッドが単一の責務を持っている
+- [ ] 命名が明確で一貫している（snake_case）
+- [ ] 関数が単一の責務を持っている
 - [ ] マジックナンバーがない
-- [ ] 型が適切に定義されている（ジェネリクスの活用）
+- [ ] 型ヒントが適切に定義されている
 - [ ] エラーハンドリングが実装されている
 
 ### セキュリティ
 - [ ] 入力検証が実装されている
 - [ ] 機密情報がハードコードされていない
-- [ ] SQLインジェクション対策がされている（PreparedStatement等）
+- [ ] ファイルパスのトラバーサル対策がされている（該当する場合）
 
 ### パフォーマンス
 - [ ] 適切なデータ構造を使用している
 - [ ] 不要な計算を避けている
-- [ ] ループが最適化されている
+- [ ] 大量データはジェネレータで処理している
 
 ### テスト
-- [ ] JUnit 5でユニットテストが書かれている
-- [ ] テストがパスする（`./gradlew test`）
+- [ ] unittestでユニットテストが書かれている
+- [ ] テストがパスする（`python -m unittest`）
 - [ ] エッジケースがカバーされている
 
 ### ドキュメント
-- [ ] クラス・メソッドにJavadocコメントがある
+- [ ] 関数にdocstringコメントがある（複雑なもののみ）
 - [ ] 複雑なロジックにコメントがある
 - [ ] TODOやFIXMEが記載されている（該当する場合）
 
 ### ツール
-- [ ] コンパイルエラーがない
-- [ ] Gradleビルドが成功する（`./gradlew build`）
+- [ ] 構文エラーがない（`python -m py_compile`）
+- [ ] テストが成功する（`python -m unittest discover`）
 - [ ] コードフォーマットが統一されている

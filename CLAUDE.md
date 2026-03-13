@@ -1,7 +1,14 @@
 # プロジェクトメモリ
 
 ## 技術スタック
-TODO 更新せよ
+
+- **言語**: Python 3.8以上
+- **主要ライブラリ**: `javalang`（Java AST解析）
+- **標準ライブラリ**: `csv`, `pathlib`, `re`, `argparse`（追加パッケージ不要）
+- **実行環境**: Python venv（zip配布）
+- **対応OS**: Windows / Mac / Linux
+- **テスト**: `unittest`（標準ライブラリ）
+- **ビルド/配布**: `venv` + `Makefile`（zip生成）
 
 ## スペック駆動開発の基本原則
 
