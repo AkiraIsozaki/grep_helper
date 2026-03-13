@@ -1,7 +1,8 @@
 # analyze.py コード解説（Java経験者向け）
 
 Python に不慣れな方向けに、Java との対比を交えながら analyze.py の全処理ロジックを解説します。
-単純な箇所は簡潔に、難しい箇所・設計上の判断が必要な箇所は「**なぜそうなっているか**」を重点的に説明します。
+単純な箇所は簡潔に、難しい箇所・設計上の判断が必要な箇所は「**なぜそうなっているか**」と
+「**具体例**」を使って説明します。
 
 ---
 
@@ -25,7 +26,8 @@ Python に不慣れな方向けに、Java との対比を交えながら analyze
 
 ## 1. このツールが何をするか（全体像）
 
-Java プロジェクトを対象に、特定の文言（定数値など）を grep した結果ファイルを受け取り、**その文言がどのような文脈で使われているか**を自動分類して TSV に出力するツールです。
+Java プロジェクトを対象に、特定の文言（定数値など）を grep した結果ファイルを受け取り、
+**その文言がどのような文脈で使われているか**を自動分類して TSV に出力するツールです。
 
 ```
 [入力] input/SAMPLE.grep
@@ -48,7 +50,7 @@ SAMPLE  間接（getter経由）条件判定    Service.java      10  if (entity
 
 処理は 3 段階：
 1. **直接参照**：grep 結果の各行を分類（定数定義 / 条件判定 / return文 など7種）
-2. **間接参照**：変数・定数・フィールドに代入されていた場合、その変数の使用箇所を追跡
+2. **間接参照**：変数・定数・フィールドに代入された場合、その変数の使用箇所を追跡
 3. **getter 経由**：フィールドに getter があれば、getter 呼び出し箇所も追跡
 
 ---
@@ -126,19 +128,30 @@ Java の `List<Map.Entry<Pattern, String>>` に相当します。
 
 > **なぜ関数内ではなくモジュールレベルで `re.compile()` するのか**
 >
-> `re.compile()` は正規表現の構文解析を行うため、わずかながらコストがかかります。
+> `re.compile()` は正規表現の構文解析を行うためコストがかかります。
 > 関数内に書くと、その関数が呼ばれるたびに毎回コンパイルが走ります。
-> モジュールレベルに置くことで、プロセス起動時の1回だけコンパイルが実行されます。
+> モジュールレベルに置くことで、プロセス起動時の1回だけで済みます。
 > Java で `static final Pattern` にするのと同じ理由です。
 
 > **優先度の仕組みと順序設計**
 >
 > リストの先頭から順番に評価し、最初にマッチしたラベルを返します。
-> この順序が重要で、たとえば `return a.equals(CODE);` というコード行は
-> `\breturn\b` にもマッチし、`.equals\s*\(` にもマッチします。
-> `.equals` が先にリストに並んでいるため「条件判定」と分類されます。
+> この順序が重要で、例えば `return a.equals(CODE);` は `\breturn\b` にも
+> `.equals\s*\(` にもマッチします。`.equals` が先に並んでいるため「条件判定」になります。
 > これは「`return` の中で比較しているならば、本質的な用途は条件判定」という
 > 設計判断を優先度として表現したものです。
+
+**【具体例】優先度による分類結果**
+
+| コード行 | マッチするパターン（複数） | 結果 |
+|---|---|---|
+| `@RequestMapping("SAMPLE")` | アノテーション | **アノテーション** |
+| `public static final String X = "SAMPLE"` | 定数定義、変数代入 | **定数定義**（先に来るため） |
+| `return a.equals("SAMPLE");` | 条件判定（`.equals`）、return文 | **条件判定**（先に来るため） |
+| `return "SAMPLE";` | return文 | **return文** |
+| `String msg = "SAMPLE";` | 変数代入 | **変数代入** |
+| `log.info("SAMPLE");` | メソッド引数 | **メソッド引数** |
+| `// SAMPLE はここで使う` | どれにもマッチしない | **その他** |
 
 ---
 
@@ -175,9 +188,27 @@ class GrepRecord:
 `@dataclass(frozen=True)` は Java の `record` クラスに相当します。
 フィールドを宣言するだけでコンストラクタ・`__eq__`（equals）・`__hash__`（hashCode）が自動生成されます。
 
+**【具体例】直接参照と間接参照で src_* の埋まり方が変わる**
+
+```
+直接参照レコード（src_var/src_file/src_lineno は空）：
+  keyword="SAMPLE", ref_type="直接", usage_type="定数定義",
+  filepath="Constants.java", lineno="9",
+  code='public static final String SAMPLE_CODE = "SAMPLE";',
+  src_var="", src_file="", src_lineno=""
+
+間接参照レコード（SAMPLE_CODE 経由で見つかった使用箇所）：
+  keyword="SAMPLE", ref_type="間接", usage_type="条件判定",
+  filepath="Constants.java", lineno="13",
+  code="if (value.equals(SAMPLE_CODE)) {",
+  src_var="SAMPLE_CODE",              ← 経由した変数名
+  src_file="Constants.java",          ← SAMPLE_CODE が定義されていたファイル
+  src_lineno="9"                      ← SAMPLE_CODE が定義されていた行
+```
+
 > **なぜ `frozen=True`（イミュータブル）にするのか**
 >
-> 1件のレコードは一度生成したら変更する必要がありません。
+> 一度生成したレコードを後から変更する必要がないため、変更できないようにします。
 > `frozen=True` にすると、生成後にフィールドを書き換えようとすると例外が発生するため、
 > 「途中で内容が変わっていた」バグを防げます。
 > また `frozen=True` があると `__hash__` も自動生成されるため、
@@ -211,7 +242,7 @@ class ProcessStats:
 > stats1 = ProcessStats()
 > stats2 = ProcessStats()
 > stats1.fallback_files.append("Foo.java")
-> print(stats2.fallback_files)  # → ["Foo.java"] ← 混入！
+> print(stats2.fallback_files)  # → ["Foo.java"] ← 混入！意図していない動作
 > ```
 >
 > `field(default_factory=list)` を使うと、インスタンス生成のたびに `list()` が呼ばれ、
@@ -283,10 +314,9 @@ Java の picocli・Commons CLI と同等です。`required=True` で必須引数
 
 > **なぜ `build_parser()` と `main()` を分けているのか**
 >
-> `main()` 内に argparse の定義を全部書いてしまうと、テストから「--source-dir /tmp/src」の
-> ような引数を渡してパーサーを単体で検証できなくなります。
-> `build_parser()` を独立させることで、`parser.parse_args(["--source-dir", "/tmp"])` と
-> 引数を直接渡すテストが書けます。
+> `main()` 内に argparse の定義を全部書いてしまうと、テストから引数を渡して
+> パーサーを単体で検証できなくなります。分離することで
+> `parser.parse_args(["--source-dir", "/tmp"])` と引数を直接渡すテストが書けます。
 
 ### main の構造
 
@@ -295,25 +325,19 @@ def main() -> None:
     parser = build_parser()
     args = parser.parse_args()       # sys.argv[1:] を解析してオブジェクトに変換
 
-    source_dir = Path(args.source_dir)   # 文字列 → Path オブジェクト
+    source_dir = Path(args.source_dir)
     input_dir  = Path(args.input_dir)
     output_dir = Path(args.output_dir)
 
-    # ① ディレクトリ存在チェック
     if not source_dir.exists() or not source_dir.is_dir():
         print(f"エラー: ...", file=sys.stderr)
-        sys.exit(1)   # Java の System.exit(1) と同じ
-
-    if not input_dir.exists() or not input_dir.is_dir():
-        ...
         sys.exit(1)
 
-    # ② .grep ファイルを検出
     grep_files = sorted(input_dir.glob("*.grep"))
     # Path.glob() は指定パターンにマッチするファイルをジェネレータで返す
     # sorted() でリストに変換しつつアルファベット順にソート
 
-    if not grep_files:   # リストが空 → ファイルなし
+    if not grep_files:
         sys.exit(1)
 
     stats = ProcessStats()
@@ -323,25 +347,21 @@ def main() -> None:
         for grep_path in grep_files:
             keyword = grep_path.stem
             # Path.stem = 拡張子を除いたファイル名
-            # "input/SAMPLE.grep" → "SAMPLE"
+            # "input/SAMPLE.grep" の stem → "SAMPLE"
 
-            # 第1段階：直接参照
             direct_records = process_grep_file(grep_path, keyword, source_dir, stats)
             all_records: list[GrepRecord] = list(direct_records)
-            # list(x) は Java の new ArrayList<>(x)（浅いコピーを作る）
-            # コピーしておくことで、後の間接追跡結果をここに追加していける
+            # list(x) でコピーを作る（direct_records を変更せず、追跡結果を別途追加するため）
 
-            # 第2・第3段階：間接・getter 追跡
             for record in direct_records:
                 # 定数定義・変数代入のみが間接追跡の起点になる
-                # 条件判定・return文・メソッド引数などは変数に代入されていないので追跡不要
                 if record.usage_type not in (
                     UsageType.CONSTANT.value, UsageType.VARIABLE.value
                 ):
                     continue
 
                 var_name = extract_variable_name(record.code, record.usage_type)
-                if not var_name:   # 変数名を抽出できなかった場合はスキップ
+                if not var_name:
                     continue
 
                 scope = determine_scope(
@@ -353,8 +373,6 @@ def main() -> None:
                     all_records.extend(
                         track_constant(var_name, source_dir, record, stats)
                     )
-                    # list.extend(other) は Java の list.addAll(other) に相当
-
                 elif scope == "class":
                     class_file = _resolve_java_file(record.filepath, source_dir)
                     if class_file:
@@ -365,7 +383,6 @@ def main() -> None:
                             all_records.extend(
                                 track_getter_calls(getter_name, source_dir, record, stats)
                             )
-
                 elif scope == "method":
                     method_scope = _get_method_scope(
                         record.filepath, source_dir, int(record.lineno)
@@ -376,7 +393,6 @@ def main() -> None:
                         )
 
             output_path = output_dir / f"{keyword}.tsv"
-            # Path / "文字列" は Java の path.resolve("文字列") に相当
             write_tsv(all_records, output_path)
             processed_files.append(grep_path.name)
 
@@ -389,12 +405,13 @@ def main() -> None:
 
 > **なぜ間接追跡の起点を「定数定義・変数代入」に限定しているのか**
 >
-> 他のタイプ（条件判定・return文・メソッド引数など）はすでに「文言を使っている現場」であり、
-> そこから変数名を抽出してさらに追跡する意味がありません。
 > 追跡が意味を持つのは「文言が別の名前に入れ替えられた（代入された）」場合だけです。
 >
-> 例：`String code = "SAMPLE"` → `code` という変数を通じてどこで使われるか？ → 追跡が必要
-> 例：`if (x.equals("SAMPLE"))` → 文言が直接比較されているだけ → 追跡不要
+> ```java
+> String code = "SAMPLE";           // ← 変数代入 → code という名前で追跡が必要
+> if (x.equals("SAMPLE")) { ... }   // ← 条件判定 → 文言が直接使われているだけ、追跡不要
+> return "SAMPLE";                   // ← return文  → 同上
+> ```
 
 ---
 
@@ -414,17 +431,15 @@ def parse_grep_line(line: str) -> dict | None:
     # rstrip('\n\r') は末尾の改行文字のみ除去
     # strip() だと前後の空白も除去されてしまい、後のパース結果が変わる可能性があるため分けている
 
-    if not stripped.strip():        # 空白のみの行 → スキップ
+    if not stripped.strip():
         return None
 
     if _BINARY_PATTERN.match(stripped):   # "Binary file xxx matches" → スキップ
         return None
 
-    # ":数字:" パターンで分割
     # _GREP_LINE_PATTERN = re.compile(r':(\d+):')
     # () でキャプチャグループを作ると、split の結果にそのグループの値も含まれる
     parts = _GREP_LINE_PATTERN.split(stripped, maxsplit=1)
-    # "Foo.java:9:    code" → ["Foo.java", "9", "    code"]
 
     if len(parts) != 3:
         return None
@@ -441,23 +456,44 @@ def parse_grep_line(line: str) -> dict | None:
 > **なぜ正規表現 `re.split(r':(\d+):', ...)` を使うのか（単純な `":"` 分割にしない理由）**
 >
 > 最もシンプルな実装は `line.split(":", 2)` ですが、**Windows パス**が問題になります。
->
-> ```
-> C:\project\src\Foo.java:42:    String s = "SAMPLE";
-> ```
->
-> これを `split(":", 2)` すると：
-> ```
-> ["C", "\\project\\src\\Foo.java", "42:    String s = ..."]
->            ↑ "C" がファイルパスになってしまう
-> ```
->
-> `:数字:` のパターンは「行番号を囲んでいるコロン」だけにマッチします。
-> `C:` は `:C:` でも `:42:` でもないのでマッチせず、正しく分割されます。
->
+
+**【具体例】Windows パスで `split(":", 2)` が失敗するケース**
+
+```
+入力行: C:\project\src\Foo.java:42:    String s = "SAMPLE";
+
+split(":", 2) の結果（3分割）:
+  ["C", "\\project\\src\\Foo.java", "42:    String s = ..."]
+        ↑ "C" がファイルパスに、"\project\..." が行番号になってしまう
+
+_GREP_LINE_PATTERN.split(..., maxsplit=1) の結果:
+  ["C:\\project\\src\\Foo.java", "42", "    String s = ..."]
+   ↑ ":42:" という「コロン＋数字＋コロン」だけで分割されるので正しく取れる
+```
+
 > さらに `maxsplit=1`（最初の1箇所だけ分割）を指定するのは、
-> コード行の中に `:` が含まれている場合（例：三項演算子、文字列リテラル）に
+> コード行の中に `:` が含まれる場合（三項演算子 `x ? a : b`、文字列リテラル `"a:b"` など）に
 > それを区切り文字と誤認しないためです。
+
+**【具体例】各入力に対する parse_grep_line の戻り値**
+
+```
+入力: "Foo.java:9:    String x = \"SAMPLE\";"
+  → {"filepath": "Foo.java", "lineno": "9", "code": 'String x = "SAMPLE";'}
+
+入力: ""  （空行）
+  → None
+
+入力: "Binary file logo.png matches"
+  → None
+
+入力: "no colon here"  （コロンなし）
+  → None  (parts の長さが 3 にならないため)
+
+入力: "Foo.java:9:    String x = \"a:b\";"  （コード内にコロン）
+  → {"filepath": "Foo.java", "lineno": "9", "code": 'String x = "a:b";'}
+  ※ maxsplit=1 なので 2番目以降の ":" は分割に使われない
+```
 
 > **なぜ `dict` を返すのか（`GrepRecord` を返さない理由）**
 >
@@ -520,25 +556,22 @@ def get_ast(filepath: str, source_dir: Path) -> object | None:
         return None
 
     cache_key = str(filepath)
-    if cache_key in _ast_cache:         # キャッシュヒット → 再パース不要
+    if cache_key in _ast_cache:
         return _ast_cache[cache_key]
 
     candidate = Path(filepath)
     if not candidate.is_absolute():
-        candidate = source_dir / filepath   # 相対パス → ソースルートからのパスに変換
+        candidate = source_dir / filepath
 
     if not candidate.exists():
-        _ast_cache[cache_key] = None        # 「試みたが存在しなかった」をキャッシュ
+        _ast_cache[cache_key] = None
         return None
 
     try:
         source = candidate.read_text(encoding="shift_jis", errors="replace")
-        # Javaソースに Shift-JIS が含まれていても読めるようにするため
-        # errors="replace" → 読めない文字は U+FFFD（?に似た文字）に置換して続行
         tree = javalang.parse.parse(source)
         _ast_cache[cache_key] = tree
     except Exception:
-        # javalang.parser.JavaSyntaxError を含む全ての例外を「フォールバック扱い」にする
         _ast_cache[cache_key] = None
 
     return _ast_cache[cache_key]
@@ -547,42 +580,48 @@ def get_ast(filepath: str, source_dir: Path) -> object | None:
 > **なぜ AST を使うのか（正規表現だけでは不十分な理由）**
 >
 > 正規表現はコード行の「文字列パターン」にしか反応できません。
-> 例として `private String type = "SAMPLE";` を考えます。
-> - `private` がついていれば正規表現でもフィールドと判定できます。
-> - しかし **パッケージプライベート**（修飾子なし）の `String type = "SAMPLE";` は
->   ローカル変数宣言と区別できません（同じ構文になるため）。
->
-> AST ならば `FieldDeclaration` ノードか `LocalVariableDeclaration` ノードかを直接判別できます。
->
-> 一方、正規表現のフォールバックも残している理由は、`javalang` が未インストールの環境や、
-> パースできない Java ファイル（javadoc の独自拡張構文など）に対応するためです。
+
+**【具体例】正規表現が誤分類するケース**
+
+```java
+// パッケージプライベートフィールド（修飾子なし）
+String type = "SAMPLE";
+```
+
+```
+正規表現による判定:
+  _FIELD_DECL_PATTERN にマッチしない（private/public などの修飾子がないため）
+  → "method"（ローカル変数）と誤判定
+
+AST による判定:
+  このノードが FieldDeclaration（クラスメンバー）か LocalVariableDeclaration（ローカル変数）か
+  を直接確認できる
+  → "class"（フィールド）と正しく判定
+```
 
 > **なぜ Shift-JIS で読むのか**
 >
 > 古い Java プロジェクトのソースファイルはコメントや文字列リテラルに
 > Shift-JIS が使われていることがあります。`errors="replace"` と組み合わせることで、
 > 一部の文字が読めなくてもファイル全体のパースは続行できます。
-> AST が目的のため、コメントや文字列の中身が少し化けても
-> 構文構造の解析には問題ありません。
-
-> **なぜ `None` もキャッシュするのか**
->
-> 「ファイルが存在しない」や「パースに失敗した」という結果もキャッシュします。
-> そうしないと、同じ .grep ファイル内の同じ Java ファイルへの参照が100行あれば
-> 100回「ファイルを探してみたが見つからなかった」という無駄な処理が走ります。
+> AST が目的のため、コメントや文字列の中身が少し化けても構文構造の解析には問題ありません。
 
 ### _classify_by_ast：AST ノードで種別を判定
+
+javalang で解析した AST は「全ノードのイテレータ」として走査できます。
+各ノードは「何行目に書かれているか」(`position.line`) を持っているので、
+対象行のノードを探してその型で使用タイプを判定します。
 
 ```python
 def _classify_by_ast(tree: object, lineno: int) -> str | None:
     for _, node in tree:
-        # javalang の AST は (パス情報, ノード) のタプルを延々と yield するジェネレータ
-        # _ でパス情報を捨て、node だけ使う（Java には相当する構文なし）
+        # javalang の AST は (パス情報, ノード) のタプルを yield するジェネレータ
+        # _ でパス情報を捨て、node だけ使う
 
         if not hasattr(node, 'position') or node.position is None:
             continue
-        # hasattr() は Java の obj != null && obj.hasField() に相当する安全チェック
-        # javalang のノードの中には position を持たないものもある（例：型パラメータ）
+        # hasattr() は Java の field != null チェックに相当
+        # javalang のノードの中には position を持たないものもある（型パラメータなど）
 
         if node.position.line != lineno:
             continue
@@ -596,7 +635,6 @@ def _classify_by_ast(tree: object, lineno: int) -> str | None:
             # getattr(obj, 'attr', default) は Java の
             # Optional.ofNullable(obj.getAttr()).orElse(default) に相当
             # さらに "or set()" は getattr が None を返した場合にも空セットにする
-            # （javalang では modifiers が None になるケースがある）
             if 'static' in modifiers and 'final' in modifiers:
                 return UsageType.CONSTANT.value
             return UsageType.VARIABLE.value
@@ -612,17 +650,39 @@ def _classify_by_ast(tree: object, lineno: int) -> str | None:
                               javalang.tree.ClassCreator)):
             return UsageType.ARGUMENT.value
 
-    return None   # 対象行のノードが見つからない → 呼び出し元が正規表現フォールバックへ
+    return None
+```
+
+**【具体例】Constants.java の各行に対する AST 判定**
+
+```java
+// Constants.java（行番号付き）
+ 9:  public static final String SAMPLE_CODE = "SAMPLE";
+13:  if (value.equals(SAMPLE_CODE)) {
+21:  return SAMPLE_CODE;
+```
+
+```
+lineno=9 のノード:
+  FieldDeclaration, modifiers={"public", "static", "final"}
+  "static" in modifiers AND "final" in modifiers → True
+  → "定数定義"
+
+lineno=13 のノード:
+  IfStatement
+  → "条件判定"
+
+lineno=21 のノード:
+  ReturnStatement
+  → "return文"
 ```
 
 > **なぜ `getattr(node, 'modifiers', set()) or set()` と二重にガードしているのか**
 >
-> `getattr(obj, 'attr', default)` は、属性が存在しない場合に `default` を返します。
-> しかし javalang では属性は存在するが値が `None` という場合もあります（修飾子なしのフィールドなど）。
-> `getattr(..., set())` だけでは `None` が返ってくる可能性があり、
-> `'static' in None` はエラーになります。
-> `... or set()` を追加することで「`None` を返してきた場合も空セットにする」という
-> 二段構えのガードになっています。
+> `getattr(obj, 'attr', default)` は、属性が存在しない場合に `default` を返しますが、
+> 属性は存在するが値が `None` という場合は `None` を返してしまいます。
+> `'static' in None` はエラーになるため、`... or set()` で
+> 「`None` が返ってきた場合も空セットにする」という二段構えのガードにしています。
 
 ### classify_usage：AST → 失敗時は正規表現
 
@@ -631,7 +691,6 @@ def classify_usage(code, filepath, lineno, source_dir, stats):
     tree = get_ast(filepath, source_dir)
 
     if tree is None:
-        # AST が使えない → 正規表現フォールバック
         # javalang はインストールされているのに失敗した場合のみ fallback_files に記録
         if _JAVALANG_AVAILABLE and filepath not in stats.fallback_files:
             stats.fallback_files.append(filepath)
@@ -649,27 +708,26 @@ def classify_usage(code, filepath, lineno, source_dir, stats):
     return classify_usage_regex(code)
 ```
 
-> **なぜ「AST で判定できなかった場合」に正規表現フォールバックがあるのか**
->
-> javalang は全ての構文要素に行番号を付与しているわけではありません。
-> 例えば `for` 文の中のインクリメント式などは `position` が `None` になります。
-> `_classify_by_ast()` が `None` を返した場合（= 対象行のノードが見つからなかった）は、
-> 正規表現が最後の手段として使われます。これにより、AST が使えても使えなくても
-> 必ず何らかの分類結果が返るようになっています。
+**【具体例】AST が使えるかどうかによる分岐の全パターン**
 
-### classify_usage_regex：正規表現フォールバック
-
-```python
-def classify_usage_regex(code: str) -> str:
-    stripped = code.strip()
-    for pattern, usage_type in USAGE_PATTERNS:
-        if pattern.search(stripped):   # search() はコード行の任意位置でマッチを探す
-            return usage_type          # マッチしたら即 return（残りはチェックしない）
-    return UsageType.OTHER.value
 ```
+ケース1: javalang がインストールされておらず _JAVALANG_AVAILABLE=False
+  → get_ast() が即 None を返す → classify_usage_regex(code) を呼ぶ
 
-`pattern.search()` は Java の `Matcher.find()` に相当します（コード行のどこかにパターンがあればマッチ）。
-`pattern.match()` だと先頭からしか検索しません（Java の `Matcher.matches()` に近い）。
+ケース2: filepath のファイルが存在しない（grep 結果のパスが相対パスで解決できない）
+  → get_ast() が None を返す（ファイル不在として None をキャッシュ）
+  → fallback_files に filepath を追加 → classify_usage_regex(code) を呼ぶ
+
+ケース3: ファイルは存在するが Java の構文エラー（独自拡張など）
+  → javalang.parse.parse() が例外 → None をキャッシュ
+  → fallback_files に filepath を追加 → classify_usage_regex(code) を呼ぶ
+
+ケース4: AST は取得できたが対象行のノードが見つからない
+  → _classify_by_ast() が None を返す → classify_usage_regex(code) を呼ぶ
+
+ケース5: AST が取得でき、対象行のノードも見つかった（通常ケース）
+  → _classify_by_ast() が UsageType.* を返す → そのまま返す
+```
 
 ---
 
@@ -682,42 +740,63 @@ def classify_usage_regex(code: str) -> str:
 ```python
 def extract_variable_name(code: str, usage_type: str) -> str | None:
     stripped = code.strip().rstrip(';')
-    # rstrip(';') でセミコロンを除去
-    # なぜ rstrip か：セミコロンは末尾にしかないため。strip(';') だと先頭も対象になる。
+    # rstrip(';') でセミコロンを除去（末尾にしかないため rstrip を使う）
 
     decl_part = stripped.split('=')[0].strip()
     # '=' で分割して左辺だけ取り出す
     # split('=') は Java の split("=") だが、最初の1文字だけでなくすべての = で分割する
     # [0] で最初の要素（= より前の部分）のみ取得
-    #
-    # 例1: 'public static final String SAMPLE_CODE = "SAMPLE"'
-    #   split('=')[0] → 'public static final String SAMPLE_CODE '
-    #   strip()       → 'public static final String SAMPLE_CODE'
-    #
-    # 例2: 'private String type;' （セミコロンのみで = がない場合）
-    #   rstrip(';')   → 'private String type'
-    #   split('=')[0] → 'private String type'（= がないので全体がそのまま）
 
-    tokens = decl_part.split()
-    # 空白で分割 → ["public", "static", "final", "String", "SAMPLE_CODE"]
+    tokens = decl_part.split()   # 空白で分割
 
     if len(tokens) >= 2:
-        # トークンが1つしかない（型名だけなど）は変数宣言ではないと判断してスキップ
         name = tokens[-1].strip('[];(){}<>')
-        # tokens[-1] は最後のトークン（Pythonの負インデックス：-1 = 末尾）
-        # 配列型 "String[]" → strip で '[]' を除去 → "String" にならないよう strip する
+        # tokens[-1] は最後のトークン（-1 = 末尾、Pythonの負インデックス）
         if name.isidentifier():
-            # isidentifier() = 有効な識別子か（英数字・アンダースコアのみ、数字始まりでない）
             return name
     return None
 ```
 
+**【具体例】様々なコード行への適用結果**
+
+```
+入力: 'public static final String SAMPLE_CODE = "SAMPLE";'
+  rstrip(';')   → 'public static final String SAMPLE_CODE = "SAMPLE"'
+  split('=')[0] → 'public static final String SAMPLE_CODE '
+  strip()       → 'public static final String SAMPLE_CODE'
+  split()       → ["public", "static", "final", "String", "SAMPLE_CODE"]
+  tokens[-1]    → "SAMPLE_CODE"
+  isidentifier  → True
+  戻り値: "SAMPLE_CODE"
+
+入力: 'private String type = "SAMPLE";'
+  rstrip(';')   → 'private String type = "SAMPLE"'
+  split('=')[0] → 'private String type '
+  tokens[-1]    → "type"
+  戻り値: "type"
+
+入力: 'private String type;'  （初期値なしの宣言）
+  rstrip(';')   → 'private String type'
+  split('=')[0] → 'private String type'  （= がないので全体）
+  tokens[-1]    → "type"
+  戻り値: "type"
+
+入力: 'if (x.equals("SAMPLE")) {'  （条件判定行・変数宣言でない）
+  rstrip(';')   → 'if (x.equals("SAMPLE")) {'
+  split('=')[0] → 'if (x.equals("SAMPLE")) {'
+  strip()       → 'if (x.equals("SAMPLE")) {'
+  split()       → ["if", '(x.equals("SAMPLE"))', "{"]
+  tokens[-1]    → "{"
+  isidentifier("{") → False  ← '{' は識別子ではない
+  戻り値: None  （変数名を抽出できなかった）
+```
+
 > **なぜ `rstrip(';')` が必要なのか**
 >
-> `private String type;` のようなフィールド宣言（初期値なしの `;` で終わる形）を扱うためです。
-> これを `split('=')` すると `['private String type;']` となり、`[0]` が `'private String type;'` で、
-> その最後のトークンが `'type;'` になってしまいます。
-> `rstrip(';')` で先にセミコロンを除去しておくことで正しく `'type'` が取れます。
+> `rstrip` は末尾の文字だけを除去します（`strip` は前後両方）。
+> セミコロンは宣言の末尾にしかないため `rstrip` で十分です。
+> これがないと `'private String type;'.split()` の最後のトークンが `'type;'` になり、
+> `'type;'.isidentifier()` が `False` を返して `None` になってしまいます。
 
 ### determine_scope：追跡範囲の決定
 
@@ -725,9 +804,7 @@ def extract_variable_name(code: str, usage_type: str) -> str | None:
 def determine_scope(usage_type, code, filepath="", source_dir=None, lineno=0):
     if usage_type == UsageType.CONSTANT.value:
         return "project"
-        # static final の定数はクラス外からも参照できるためプロジェクト全体が対象
 
-    # AST が使えるなら FieldDeclaration / LocalVariableDeclaration ノードで判定
     if filepath and source_dir and lineno and _JAVALANG_AVAILABLE:
         tree = get_ast(filepath, source_dir)
         if tree is not None:
@@ -738,33 +815,45 @@ def determine_scope(usage_type, code, filepath="", source_dir=None, lineno=0):
                     if node.position.line != lineno:
                         continue
                     if isinstance(node, javalang.tree.FieldDeclaration):
-                        return "class"    # クラスフィールド → 同一クラスが対象
+                        return "class"
                     if isinstance(node, javalang.tree.LocalVariableDeclaration):
-                        return "method"   # ローカル変数 → 同一メソッドが対象
+                        return "method"
             except Exception:
                 pass
 
-    # AST が使えない場合：正規表現フォールバック
-    # _FIELD_DECL_PATTERN = r'^(private|protected|public|static|final|\s)*\s+型名 変数名'
     stripped = code.strip()
     if _FIELD_DECL_PATTERN.match(stripped):
         return "class"
     return "method"
 ```
 
+**【具体例】3つのスコープとそれぞれの追跡範囲**
+
+```java
+// Constants.java
+public class Constants {
+    public static final String SAMPLE_CODE = "SAMPLE";  // ← "project" スコープ
+    //   → プロジェクト全体の .java ファイルを検索
+    //   → 理由: static final 定数は他クラスから参照できるため
+
+    private String type = "SAMPLE";  // ← "class" スコープ
+    //   → Constants.java 内だけを検索
+    //   → 理由: フィールドは自クラスのメソッドからしか通常参照されないため
+
+    public void process() {
+        String msg = "SAMPLE";  // ← "method" スコープ
+        //   → process() メソッド内（開始行〜終了行）だけを検索
+        //   → 理由: ローカル変数はメソッド外からは参照不可のため
+    }
+}
+```
+
 > **なぜ正規表現フォールバックはパッケージプライベートフィールドを取りこぼすのか**
 >
-> `_FIELD_DECL_PATTERN` は先頭に `private|protected|public|static|final` がある前提で
-> 書かれています。パッケージプライベートフィールドは修飾子なしで書くため：
->
-> ```java
-> String type = "SAMPLE";   // ← パッケージプライベートフィールド
-> ```
->
-> これは正規表現的にはローカル変数 `String type = ...` と区別がつきません。
-> どちらも「型名 変数名 = 値」という同じ構文だからです。
-> このケースを正しく処理するには AST で「このノードがクラス直下にある FieldDeclaration か」を
-> 確認する必要があります。それが AST 判定を優先する理由です。
+> `_FIELD_DECL_PATTERN` は先頭に `private|protected|public|static|final` がある前提です。
+> パッケージプライベートフィールドは修飾子なしで書くため、
+> 正規表現的にはローカル変数 `String type = ...` と区別がつきません。
+> AST なら `FieldDeclaration` ノードか `LocalVariableDeclaration` ノードかを直接判別できます。
 
 | スコープ | 判定条件 | 追跡先 |
 |---|---|---|
@@ -781,23 +870,17 @@ def _search_in_lines(lines, var_name, start_line, origin, source_dir,
                      ref_type, stats, filepath_for_record):
 
     pattern = re.compile(r'\b' + re.escape(var_name) + r'\b')
-    # \b は「単語境界」。var_name が "MY_VAR" のとき：
-    #   "MY_VAR = 1"    → マッチ ✓
-    #   "MY_VARIABLE"   → マッチしない ✓（"MY_VAR" が単語の途中で終わっていないため）
-    #   "prefix_MY_VAR" → マッチしない ✓（単語の先頭が "_" の後ろのため）
-    #
+    # \b は「単語境界」
     # re.escape() は Java の Pattern.quote() に相当
-    # var_name に正規表現の特殊文字（例：$）が含まれていても安全にマッチできる
 
     records: list[GrepRecord] = []
 
     for idx, line in enumerate(lines):
         # enumerate(lines) は (インデックス, 値) のタプルを返す
-        # Java の for (int i = 0; i < lines.size(); i++) に相当
+        # Java の for (int idx = 0; idx < lines.size(); idx++) に相当
         current_lineno = start_line + idx
 
         # 変数の定義行自体はスキップ
-        # （"SAMPLE_CODE = ..." という定義行が間接参照としてまた出てくることを防ぐ）
         if (filepath_for_record == origin.filepath
                 and str(current_lineno) == origin.lineno):
             continue
@@ -806,69 +889,50 @@ def _search_in_lines(lines, var_name, start_line, origin, source_dir,
             continue
 
         code = line.strip()
-        usage_type = classify_usage(   # 間接参照先の行も使用タイプを分類
-            code=code,
-            filepath=filepath_for_record,
-            lineno=current_lineno,
-            source_dir=source_dir,
-            stats=stats,
-        )
+        usage_type = classify_usage(...)
         records.append(GrepRecord(
             keyword=origin.keyword,
-            ref_type=ref_type,          # "間接" or "間接（getter経由）"
-            usage_type=usage_type,
-            filepath=filepath_for_record,
-            lineno=str(current_lineno),
-            code=code,
-            src_var=var_name,           # 経由した変数/定数名
-            src_file=origin.filepath,   # 変数が定義されたファイル
-            src_lineno=origin.lineno,   # 変数が定義された行
+            ref_type=ref_type,
+            ...
+            src_var=var_name,
+            src_file=origin.filepath,
+            src_lineno=origin.lineno,
         ))
 
     return records
 ```
 
-> **なぜ `\b`（単語境界）を使うのか**
->
-> 変数名 `code` で検索するとき、`\b` なしの正規表現だと
-> `errorCode`・`codeList` などにもマッチしてしまいます。
-> `\b` は英数字とそれ以外の境界を示すため、`code` は「単体の単語として登場している箇所」
-> だけにマッチします。
+**【具体例】`\b` 単語境界が必要な理由**
 
-### track_constant：プロジェクト全体を検索
+```java
+// var_name = "code" で検索するとき
 
-```python
-def track_constant(var_name, source_dir, origin, stats):
-    records: list[GrepRecord] = []
-
-    for java_file in sorted(source_dir.rglob("*.java")):
-        # rglob("*.java") = 再帰的にサブディレクトリも含めて *.java を全検索
-        # Java の Files.walk(source_dir).filter(p -> p.toString().endsWith(".java")) に相当
-        # sorted() で処理順を安定させる（OS によってファイル列挙順が変わるため）
-        try:
-            lines = java_file.read_text(encoding="shift_jis", errors="replace").splitlines()
-            # read_text() : ファイル全体を1つの文字列として読む
-            # splitlines() : 改行で分割してリストにする（Java の Files.readAllLines() 相当）
-        except Exception:
-            stats.encoding_errors.append(str(java_file))
-            continue   # 読めないファイルはスキップして次へ
-
-        records.extend(_search_in_lines(
-            lines=lines, var_name=var_name, start_line=1,
-            origin=origin, source_dir=source_dir,
-            ref_type=RefType.INDIRECT.value,
-            stats=stats,
-            filepath_for_record=str(java_file),
-        ))
-
-    return records
+String errorCode = "X";   // "code" が含まれるが単語の一部 → マッチしない ✓
+String codeList  = "X";   // 同上 → マッチしない ✓
+String code      = "X";   // "code" が単独の単語 → マッチする ✓
+doSomething(code);        // 同上 → マッチする ✓
 ```
 
-> **なぜ `sorted()` するのか**
->
-> `rglob()` が返すファイルの順序はプラットフォームによって異なります（Linux は inode 順、
-> Windows はアルファベット順、など）。`sorted()` で常に同じ順に処理することで、
-> 出力 TSV の行順が実行環境によってバラバラになることを防ぎます。
+```
+\b なし（r'code'）でマッチする行:
+  errorCode, codeList, code, doSomething(code) ← 誤検出あり
+
+\b あり（r'\bcode\b'）でマッチする行:
+  code, doSomething(code)                      ← 正確
+```
+
+**【具体例】定義行スキップのしくみ**
+
+```
+origin.filepath = "Constants.java"
+origin.lineno   = "9"
+
+Constants.java の全行を走査中、current_lineno=9 の行に差し掛かったとき:
+  filepath_for_record == origin.filepath → True
+  str(9) == "9"                          → True
+  → continue でスキップ
+  （定数の定義行 "SAMPLE_CODE = ..." が間接参照として二重に出力されることを防ぐ）
+```
 
 ### _get_method_scope：メソッドの行範囲を特定
 
@@ -881,11 +945,10 @@ def _get_method_scope(filepath, source_dir, lineno):
     # ① javalang でメソッドの開始行を全収集
     method_starts: list[int] = []
     for _, method_decl in tree.filter(javalang.tree.MethodDeclaration):
-        # tree.filter(NodeType) は特定の型のノードだけを抽出するヘルパー
         if method_decl.position:
             method_starts.append(method_decl.position.line)
 
-    method_starts.sort()   # 昇順ソート（Javaの Collections.sort() 相当）
+    method_starts.sort()
 
     # ② lineno 以下で最大の開始行 = lineno を含むメソッドの開始行
     method_start = None
@@ -894,24 +957,18 @@ def _get_method_scope(filepath, source_dir, lineno):
             method_start = start   # 都度上書き → ループ終了時に lineno 直前の最大値
 
     if method_start is None:
-        return None   # メソッドより前の行（クラス宣言など）
+        return None
 
     # ③ ブレースカウンタでメソッドの終了行を特定
-    java_file = _resolve_java_file(filepath, source_dir)
-    lines = java_file.read_text(encoding="shift_jis", errors="replace").splitlines()
-
+    lines = java_file.read_text(...).splitlines()
     brace_count = 0
     found_open = False
     for i, line in enumerate(lines[method_start - 1:], start=method_start):
-        # lines[method_start - 1:] : メソッド開始行から末尾までのスライス
-        # enumerate(..., start=method_start) : ループ変数 i が method_start から始まる
-
         brace_count += line.count('{') - line.count('}')
         if not found_open and brace_count > 0:
-            found_open = True   # 最初の '{' を発見
+            found_open = True
         if found_open and brace_count <= 0:
-            return (method_start, i)   # ブレースが全て閉じた行 = メソッド終了
-
+            return (method_start, i)
     return None
 ```
 
@@ -919,49 +976,39 @@ def _get_method_scope(filepath, source_dir, lineno):
 >
 > javalang の AST ノードは「開始行（`position.line`）」しか保持していません。
 > 終了行の情報は AST に含まれていないため、自前でテキストを解析する必要があります。
->
-> ブレースカウンタ方式は「`{` を見つけるたびに +1、`}` を見つけるたびに -1、
-> 最初の `{` を見た後に 0 になった行がメソッドの終わり」という方式です。
-> `found_open` フラグが必要な理由は、メソッドシグネチャ行（例：`public void run() {`）に
-> `{` があってもすぐには終了しないため「最初の `{` を見た」という状態を記憶するためです。
->
-> ```java
-> public void method() {    // brace_count: 0→1, found_open: true
->     if (x) {              // brace_count: 1→2
->         doSomething();
->     }                     // brace_count: 2→1
-> }                         // brace_count: 1→0, found_open かつ count≦0 → ここが終了行
-> ```
 
-### track_local：ローカル変数の追跡
+**【具体例】ブレースカウンタによる終了行特定の追跡**
 
-```python
-def track_local(var_name, method_scope, origin, source_dir, stats):
-    java_file = _resolve_java_file(origin.filepath, source_dir)
-    if java_file is None:
-        return []
-
-    all_lines = java_file.read_text(encoding="shift_jis", errors="replace").splitlines()
-
-    start_line, end_line = method_scope   # タプルのアンパック代入
-    # start_line, end_line = (12, 17) のような代入
-
-    method_lines = all_lines[start_line - 1 : end_line]
-    # Pythonのリストスライス: list[a:b] は インデックス a 以上 b 未満（0-indexed）
-    # start_line が 1-indexed なので -1 してゼロベースに変換
-    # end_line はそのまま使うと「その行を含む」スライスになる（b は含まれないため）
-    #
-    # 例: start_line=12, end_line=17 のとき
-    #   all_lines[11:17] → インデックス 11,12,13,14,15,16 の6行 = 12行目〜17行目
-
-    return _search_in_lines(
-        lines=method_lines,
-        var_name=var_name,
-        start_line=start_line,   # 検索結果の行番号をファイル全体での行番号に変換するために必要
-        origin=origin,
-        ...
-    )
+```java
+// Constants.java（method_start=12 の isSample メソッド）
+12:  public static boolean isSample(String value) {  ← ここから走査開始
+13:      if (value.equals(SAMPLE_CODE)) {
+14:          return true;
+15:      }
+16:      return false;
+17:  }   ← ここが終了
 ```
+
+```
+i=12: '{' が1個、'}' が0個 → brace_count = 1   found_open = true
+i=13: '{' が1個、'}' が0個 → brace_count = 2
+i=14: '{' が0個、'}' が0個 → brace_count = 2
+i=15: '{' が0個、'}' が1個 → brace_count = 1
+i=16: '{' が0個、'}' が0個 → brace_count = 1
+i=17: '{' が0個、'}' が1個 → brace_count = 0   found_open=true かつ count≦0
+  → return (12, 17)
+
+結果: method_scope = (12, 17)
+  = 12行目から17行目がこのメソッドの行範囲
+```
+
+> **`found_open` フラグが必要な理由**
+>
+> メソッドシグネチャより前の行（クラス宣言など）に `}` があり得るからです。
+> `found_open` がないと、最初の `{` を見る前に `}` だけが出てきたとき（`brace_count ≦ 0`）に
+> 誤ってそこが終了行と判断されます。
+> 「最初の `{` を見た」という状態を `found_open` で記憶することで、
+> メソッドボディの開始を確認してから終了判定を始めるようにしています。
 
 ---
 
@@ -977,49 +1024,71 @@ def find_getter_names(field_name: str, class_file: Path) -> list[str]:
 
     # 方式1: 命名規則（field_name="type" → "getType"）
     getter_by_convention = "get" + field_name[0].upper() + field_name[1:]
-    # str[0]    : 先頭1文字 → .upper() で大文字化
-    # str[1:]   : 2文字目以降（Javaの s.substring(1) に相当）
-    # "type" → "g" + "e" + "t" + "T" + "ype" → "getType"
+    # str[0]  : 先頭1文字
+    # .upper(): 大文字化
+    # str[1:] : 2文字目以降（Java の s.substring(1)）
     candidates.append(getter_by_convention)
 
-    # 方式2: AST で `return field_name;` しているメソッドを検索（非標準命名に対応）
+    # 方式2: AST で `return field_name;` しているメソッドを検索
     if _JAVALANG_AVAILABLE:
-        cache_key = str(class_file)
-        if cache_key not in _ast_cache:
-            # まだキャッシュされていなければここでパース
-            try:
-                source = class_file.read_text(encoding="shift_jis", errors="replace")
-                _ast_cache[cache_key] = javalang.parse.parse(source)
-            except Exception:
-                _ast_cache[cache_key] = None
-
-        tree = _ast_cache[cache_key]
-        if tree is not None:
-            for _, method_decl in tree.filter(javalang.tree.MethodDeclaration):
-                for _, stmt in method_decl.filter(javalang.tree.ReturnStatement):
-                    if (stmt.expression is not None
-                            and hasattr(stmt.expression, 'member')
-                            and stmt.expression.member == field_name):
-                        candidates.append(method_decl.name)
+        ...
+        for _, method_decl in tree.filter(javalang.tree.MethodDeclaration):
+            for _, stmt in method_decl.filter(javalang.tree.ReturnStatement):
+                if (stmt.expression is not None
+                        and hasattr(stmt.expression, 'member')
+                        and stmt.expression.member == field_name):
+                    candidates.append(method_decl.name)
 
     return list(set(candidates))
-    # set() でリストの重複を除去してからリストに戻す
-    # 命名規則と AST 解析で同じ名前が見つかった場合のために必要
+    # set() でリストの重複を除去してからリストに変換
+```
+
+**【具体例】Entity.java に対する find_getter_names の動作**
+
+```java
+// Entity.java
+public class Entity {
+    private String type = "SAMPLE";  // field_name = "type"
+
+    public String getType() {        // ← 方式1（命名規則）と方式2（return type;）の両方でマッチ
+        return type;
+    }
+
+    public String fetchCurrentType() {  // ← 方式2のみでマッチ（非標準命名）
+        return type;
+    }
+}
+```
+
+```
+方式1（命名規則）:
+  "get" + "t".upper() + "ype" = "get" + "T" + "ype" = "getType"
+  candidates = ["getType"]
+
+方式2（AST の return 文解析）:
+  getType()           の return 文: stmt.expression.member = "type" == field_name → 追加
+  fetchCurrentType()  の return 文: stmt.expression.member = "type" == field_name → 追加
+  candidates = ["getType", "getType", "fetchCurrentType"]
+
+set() で重複除去:
+  {"getType", "fetchCurrentType"}
+
+list() でリストに変換:
+  ["getType", "fetchCurrentType"]（順序は不定）
 ```
 
 > **なぜ2つの方式を組み合わせるのか**
 >
 > 方式1（命名規則）だけでは、Java Bean 規約に従わない getter 名（例：`fetchType()`・`readType()`）
 > を見逃します。方式2（return 文解析）では `return type;` しているメソッドを全て拾えるため、
-> 非標準の命名にも対応できます。ただし方式2は `javalang` が必要なので、
-> インストールされていない場合は方式1だけで動作します。
+> 非標準の命名にも対応できます。
 
 > **なぜ false positive（誤検出）を許容しているのか**
 >
 > `track_getter_calls()` はプロジェクト内の同名のメソッド呼び出しを全て拾います。
-> 例えば `getType()` という名前を持つ他のクラスのメソッドも検出されます。
-> ツールの設計方針として「見逃しより誤検出のほうが許容できる」という判断です。
-> 調査目的では漏れのない一覧のほうが有用で、人手でノイズを除くコストは低いためです。
+> 例えば全く別のクラスが持つ `getType()` も検出されます。
+> 設計方針として「見逃しより誤検出のほうが許容できる（漏れのない一覧を優先する）」
+> という判断をしているため、これは仕様上許容された動作です。
 
 ### track_getter_calls：getter 呼び出し箇所を検索
 
@@ -1027,20 +1096,40 @@ def find_getter_names(field_name: str, class_file: Path) -> list[str]:
 def track_getter_calls(getter_name, source_dir, origin, stats):
     pattern = re.compile(r'\b' + re.escape(getter_name) + r'\s*\(')
     # getter_name + '(' のパターン
-    # \s* はメソッド名と '(' の間にスペースが入る可能性への対処（例：getType ()）
+    # \s* はメソッド名と '(' の間にスペースが入る可能性への対処
 
     for java_file in sorted(source_dir.rglob("*.java")):
-        lines = java_file.read_text(encoding="shift_jis", errors="replace").splitlines()
-
+        ...
         for i, line in enumerate(lines, start=1):
             # enumerate(lines, start=1) は 1 始まりのインデックスを生成
-            # デフォルトは 0 始まりだが start= で変更できる
             if not pattern.search(line):
                 continue
             records.append(GrepRecord(
                 ref_type=RefType.GETTER.value,   # "間接（getter経由）"
                 ...
             ))
+```
+
+**【具体例】Service.java での getter 呼び出し検出**
+
+```java
+// Service.java
+public class Service {
+    public void process(Entity entity) {
+        if (entity.getType().equals("SAMPLE")) {  // ← getType() がマッチ
+            System.out.println("matched");
+        }
+    }
+}
+```
+
+```
+getter_name = "getType"
+pattern = r'\bgetType\s*\('
+
+Service.java 10行目: "if (entity.getType().equals("SAMPLE")) {"
+  pattern.search(line) → マッチ ✓
+  → GrepRecord(ref_type="間接（getter経由）", filepath="Service.java", lineno="10", ...)
 ```
 
 ---
@@ -1058,10 +1147,9 @@ def write_tsv(records: list[GrepRecord], output_path: Path) -> None:
         records,
         key=lambda r: (r.keyword, r.filepath, int(r.lineno) if r.lineno.isdigit() else 0),
     )
-    # sorted(iterable, key=関数) : key 関数の戻り値でソート（Java の Comparator に相当）
+    # sorted(iterable, key=関数) : key 関数の戻り値でソート
     # lambda r: ... : 無名関数（Java の r -> ... に相当）
     # タプル (a, b, c) を返すと「a が同値なら b を比較、b も同値なら c を比較」という複合ソート
-    # int(r.lineno) : 文字列を整数に変換して数値ソート
 
     with open(output_path, "w", encoding="utf-8-sig", newline="") as f:
         writer = csv.writer(f, delimiter="\t")
@@ -1074,17 +1162,24 @@ def write_tsv(records: list[GrepRecord], output_path: Path) -> None:
 ```
 
 > **なぜ行番号のソートに `int(r.lineno)` が必要なのか**
->
-> 行番号は文字列で保持しています（`lineno: str`）。
-> 文字列のままソートすると辞書順（アルファベット順）になります：
->
-> ```
-> 文字列ソート: "10" < "2" < "9"  ← "1" が "2" より前なので誤った順序
-> 数値ソート:   2 < 9 < 10        ← 正しい順序
-> ```
->
-> `int(r.lineno)` で整数に変換してソートキーにすることで正しい数値順になります。
-> `if r.lineno.isdigit() else 0` は、万が一行番号が数字でない文字列だった場合の安全策です。
+
+**【具体例】文字列ソートと数値ソートの違い**
+
+```
+ソート前（GrepRecord の lineno）: ["10", "2", "9", "1", "21"]
+
+文字列ソート（デフォルト）:
+  → ["1", "10", "2", "21", "9"]
+  理由: "1" < "10" < "2"（先頭文字 "1" < "2" で比較されるため "10" が "2" より前）
+
+数値ソート（int() 変換後）:
+  → ["1", "2", "9", "10", "21"]
+  理由: 1 < 2 < 9 < 10 < 21（数値として正しく比較）
+```
+
+`key=lambda r: (r.keyword, r.filepath, int(r.lineno) if r.lineno.isdigit() else 0)` は
+「まずキーワードでソート、同じキーワードならファイルパスで、さらに同じなら行番号（数値）で」
+という3段階の複合ソートキーです。
 
 > **なぜ `encoding="utf-8-sig"` を使うのか（BOM の意味）**
 >
@@ -1092,16 +1187,12 @@ def write_tsv(records: list[GrepRecord], output_path: Path) -> None:
 > BOM は `EF BB BF` の3バイトをファイル先頭に付加します。
 > これがないと Excel でファイルを開いたときに日本語が文字化けします
 > （Excel が UTF-8 と認識しないため）。
-> テキストエディタや Python での再読み込みでは BOM は自動的に無視されるため
-> 互換性の問題はありません。
 
 > **なぜ `newline=""` が必要なのか**
 >
 > Python の `csv` モジュールは改行の処理を自分で管理します。
-> `newline=""` を指定しないと、OS によって改行コードが変換され（Windows では `\r\n`、
-> Linux では `\n`）、csv モジュールがその変換済みの改行をさらに変換して
-> `\r\r\n` のような二重改行が発生することがあります。
-> `newline=""` で「OS による改行変換を無効化」して csv モジュールに制御を渡します。
+> `newline=""` を指定しないと、OS による改行変換が csv モジュールの処理と
+> 二重にかかってしまい、`\r\r\n` のような二重改行が発生することがあります。
 
 ---
 
@@ -1119,7 +1210,7 @@ def print_report(stats: ProcessStats, processed_files: list[str]) -> None:
         f"有効: {stats.valid_lines}  "
         f"スキップ: {stats.skipped_lines}"
     )
-    # 隣接する文字列リテラルは自動的に1つに連結される（Java の + 演算子と同じ結果）
+    # 隣接する文字列リテラルは自動的に1つに連結される
 
     if stats.fallback_files:
         # Python ではリストが空のとき False、要素があるとき True と評価される
@@ -1143,35 +1234,45 @@ Python のモジュールはプロセス起動時に1回だけロードされ、
 これは Java の `static` フィールドと同等の寿命です。
 
 ```
-                ┌──────────────────────────────────────┐
-                │  _ast_cache (dict)                    │
-                │                                       │
-                │  "Foo.java" → CompilationUnit  ←─ パース成功 │
-                │  "Bar.java" → None             ←─ パース失敗 or ファイル不在 │
-                │  （未登録）  → キーが存在しない ←─ まだ試していない │
-                └──────────────────────────────────────┘
+                ┌──────────────────────────────────────────┐
+                │  _ast_cache (dict)                        │
+                │                                           │
+                │  "Constants.java" → CompilationUnit  ←─ パース成功 │
+                │  "Bad.java"       → None             ←─ パース失敗 or ファイル不在 │
+                │  （未登録）        → キーが存在しない ←─ まだ試していない │
+                └──────────────────────────────────────────┘
 ```
 
 > **`dict.get()` ではなく `in` 演算子を使う理由**
->
-> Python の `dict.get(key)` は「キーが存在しない場合」も「値が `None` の場合」も
-> 同じく `None` を返します。この2つを区別できません。
->
-> ```python
-> cache = {"Bar.java": None}   # パース失敗を記録済み
->
-> cache.get("Bar.java")    # → None  ← パース失敗のキャッシュ
-> cache.get("Baz.java")    # → None  ← まだ試していない
-> # 両方 None が返るため区別できない
->
-> "Bar.java" in cache      # → True   ← キャッシュ済み（パース失敗）
-> "Baz.java" in cache      # → False  ← まだ試していない
-> # in 演算子なら区別できる
-> ```
->
-> Java の `Map.containsKey()` に相当します。
-> 「`None` を入れた（試みたが失敗）」と「未登録（まだ試していない）」を区別することで、
-> 存在しないファイルへの無駄なアクセスを確実に防ぎます。
+
+**【具体例】`get()` と `in` の違い**
+
+```python
+cache = {}
+cache["Bad.java"] = None   # パース失敗をキャッシュ済み
+
+# .get() を使うと区別できない
+cache.get("Bad.java")    # → None  ← パース失敗のキャッシュ
+cache.get("Baz.java")    # → None  ← まだ試していない（キーが存在しない）
+# どちらも None が返る → 「また試しに読みに行く」無駄な処理が発生してしまう
+
+# in 演算子を使うと区別できる（Java の Map.containsKey() 相当）
+"Bad.java" in cache    # → True   ← キャッシュ済み → 読みに行かない
+"Baz.java" in cache    # → False  ← 未登録 → 初めて試みる
+```
+
+```python
+# コード内の使われ方
+cache_key = str(filepath)
+if cache_key not in _ast_cache:          # ← 「まだ試していない」ときだけパースする
+    try:
+        tree = javalang.parse.parse(...)
+        _ast_cache[cache_key] = tree
+    except Exception:
+        _ast_cache[cache_key] = None     # ← 失敗も記録（次回は即 None を返す）
+
+return _ast_cache[cache_key]             # ← 成功なら tree、失敗なら None
+```
 
 ---
 
@@ -1184,26 +1285,31 @@ main()
 for grep_path in *.grep:
  │
  ├─ process_grep_file()
- │   行ごとに parse_grep_line()（filepath:lineno:code に分割）
- │           → classify_usage()（AST優先 → 正規表現フォールバックで7種分類）
+ │   行ごとに parse_grep_line()
+ │     ":数字:" で分割（Windows パス対応）→ {filepath, lineno, code} の dict
+ │   → classify_usage()
+ │       get_ast() でキャッシュ付き AST パース（Shift-JIS・失敗も None でキャッシュ）
+ │       _classify_by_ast() で FieldDeclaration/ReturnStatement 等のノード型で判定
+ │       判定できなければ classify_usage_regex() で正規表現フォールバック（優先度順）
  │   → 直接参照 GrepRecord のリスト
  │
  ├─ for record（定数定義・変数代入のみが起点）:
- │    extract_variable_name() → "String x = val;" から "x" を取り出す
- │    determine_scope()       → AST で FieldDeclaration / LocalVariable を判別
+ │    extract_variable_name() → rstrip(';') → split('=')[0] → 最後のトークン
+ │    determine_scope()       → AST で FieldDeclaration か LocalVariableDeclaration か判別
  │    ↓
  │    project → track_constant()   全 .java を rglob で走査
  │    class   → track_field()      同一クラスファイルのみ走査
- │              find_getter_names()（命名規則 + return 文 AST解析）
+ │              find_getter_names()（命名規則 + return 文 AST解析で getter 名収集）
  │              → track_getter_calls() プロジェクト全体で getter 呼び出しを検索
- │    method  → _get_method_scope()（AST で開始行 + ブレースカウンタで終了行）
- │              → track_local() メソッド行範囲のみ走査
+ │    method  → _get_method_scope()
+ │                javalang でメソッド開始行収集 + ブレースカウンタで終了行を特定
+ │              → track_local() メソッド行範囲のスライスのみ走査
  │
  │    各 track_*() の中核は _search_in_lines()
- │    （\b で単語境界マッチ・定義行スキップ・各行を再度 classify_usage で分類）
+ │    （\b 単語境界マッチ・定義行スキップ・各行を再度 classify_usage で分類）
  │
  └─ write_tsv()
-     数値ソート（文字列ソート "10"<"9" バグ防止）→ UTF-8 BOM 付き TSV に書き出し
+     int() 変換で数値ソート（"10"<"9" バグ防止）→ UTF-8 BOM 付き TSV に書き出し
  │
 print_report()   統計・フォールバック発生ファイルを表示
 ```
