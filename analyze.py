@@ -362,26 +362,58 @@ _FIELD_DECL_PATTERN = re.compile(
 )
 
 
-def determine_scope(usage_type: str, code: str) -> str:
+def determine_scope(
+    usage_type: str,
+    code: str,
+    filepath: str = "",
+    source_dir: Path | None = None,
+    lineno: int = 0,
+) -> str:
     """変数の種類に応じた追跡スコープを返す。
 
+    javalang が利用可能な場合は AST の FieldDeclaration / LocalVariableDeclaration
+    ノードで判定するため、パッケージプライベートフィールド（修飾子なし）も正しく
+    "class" と判定できる。AST が使えない場合は正規表現フォールバック。
+
     Args:
-        usage_type: 使用タイプ文字列（UsageType.value）
-        code:       変数定義のコード行
+        usage_type:  使用タイプ文字列（UsageType.value）
+        code:        変数定義のコード行
+        filepath:    Javaファイルのパス（AST判定に使用。省略時はフォールバック）
+        source_dir:  Javaソースのルートディレクトリ（AST判定に使用）
+        lineno:      対象行の行番号（AST判定に使用）
 
     Returns:
         "project"（定数）/ "class"（フィールド）/ "method"（ローカル変数）
     """
     if usage_type == UsageType.CONSTANT.value:
         return "project"
+
+    # AST が利用可能な場合は FieldDeclaration ノードで判定
+    # （パッケージプライベートフィールドも正しく検出できる）
+    if filepath and source_dir and lineno and _JAVALANG_AVAILABLE:
+        tree = get_ast(filepath, source_dir)
+        if tree is not None:
+            try:
+                for _, node in tree:
+                    if not hasattr(node, 'position') or node.position is None:
+                        continue
+                    if node.position.line != lineno:
+                        continue
+                    if isinstance(node, javalang.tree.FieldDeclaration):
+                        return "class"
+                    if isinstance(node, javalang.tree.LocalVariableDeclaration):
+                        return "method"
+            except Exception:
+                pass
+
+    # ASTが使えない場合は正規表現フォールバック
     stripped = code.strip()
-    # フィールド判定: クラスレベルの宣言（アクセス修飾子 + 型 + 名前 の形式）
     if _FIELD_DECL_PATTERN.match(stripped):
         return "class"
     return "method"
 
 
-def extract_variable_name(code: str, usage_type: str) -> str | None:
+def extract_variable_name(code: str, usage_type: str) -> str | None:  # noqa: ARG001
     """定数/変数の名前をコード行から抽出する。
 
     左辺（= より前）の最後の識別子を変数名とみなす。
@@ -840,6 +872,34 @@ def write_tsv(records: list[GrepRecord], output_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# F-06: Reporter
+# ---------------------------------------------------------------------------
+
+def print_report(stats: ProcessStats, processed_files: list[str]) -> None:
+    """処理サマリを標準出力に出力する。全ファイル処理完了後に1回呼び出す。
+
+    Args:
+        stats:           処理統計
+        processed_files: 処理した .grep ファイル名のリスト
+    """
+    print("\n--- 処理完了 ---")
+    print(f"処理ファイル: {', '.join(processed_files)}")
+    print(
+        f"総行数: {stats.total_lines}  "
+        f"有効: {stats.valid_lines}  "
+        f"スキップ: {stats.skipped_lines}"
+    )
+    if stats.fallback_files:
+        print(f"ASTフォールバック ({len(stats.fallback_files)} 件):")
+        for f in stats.fallback_files:
+            print(f"  {f}")
+    if stats.encoding_errors:
+        print(f"エンコーディングエラー ({len(stats.encoding_errors)} 件):")
+        for f in stats.encoding_errors:
+            print(f"  {f}")
+
+
+# ---------------------------------------------------------------------------
 # CLI: argparse + main()
 # ---------------------------------------------------------------------------
 
@@ -921,7 +981,10 @@ def main() -> None:
                 if not var_name:
                     continue
 
-                scope = determine_scope(record.usage_type, record.code)
+                scope = determine_scope(
+                    record.usage_type, record.code,
+                    record.filepath, source_dir, int(record.lineno),
+                )
 
                 if scope == "project":
                     # 第2段階: 定数をプロジェクト全体で追跡
@@ -965,14 +1028,7 @@ def main() -> None:
         print(f"予期しないエラー: {e}", file=sys.stderr)
         sys.exit(2)
 
-    # 処理レポート（簡易版: F-06 Reporter は次ステップで実装）
-    print("\n--- 処理完了 ---")
-    print(f"処理ファイル: {', '.join(processed_files)}")
-    print(f"総行数: {stats.total_lines}  有効: {stats.valid_lines}  スキップ: {stats.skipped_lines}")
-    if stats.fallback_files:
-        print(f"ASTフォールバック: {len(stats.fallback_files)} ファイル")
-    if stats.encoding_errors:
-        print(f"エンコーディングエラー: {len(stats.encoding_errors)} ファイル")
+    print_report(stats, processed_files)
 
 
 if __name__ == "__main__":
