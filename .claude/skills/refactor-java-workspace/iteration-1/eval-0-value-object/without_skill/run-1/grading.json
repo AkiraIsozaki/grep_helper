@@ -1,0 +1,45 @@
+{
+  "eval_id": 0,
+  "eval_name": "value-object-for-pivot-cell",
+  "run_type": "without_skill",
+  "expectations": [
+    {
+      "text": "新しいValue ObjectクラスまたはRecordが作成されている (CellPosition等)",
+      "passed": false,
+      "evidence": "レートリミットで未実行"
+    },
+    {
+      "text": "StepViewModelからint[]によるpivot管理が削除されている",
+      "passed": false,
+      "evidence": "レートリミットで未実行"
+    },
+    {
+      "text": "StepViewModelTestがValue Objectを使うよう更新されている",
+      "passed": false,
+      "evidence": "レートリミットで未実行"
+    },
+    {
+      "text": "docs/以下の少なくとも1つのファイルが更新されている",
+      "passed": false,
+      "evidence": "レートリミットで未実行"
+    },
+    {
+      "text": ".steering/以下に新しいステアリングファイルディレクトリが作成されている",
+      "passed": false,
+      "evidence": "レートリミットで未実行（スキルがないため、ステアリング概念を知らない）"
+    },
+    {
+      "text": "./gradlew build が成功する",
+      "passed": false,
+      "evidence": "未実行"
+    }
+  ],
+  "pass_rate": 0.0,
+  "notes": "レートリミットにより完全に未実行。ベースラインとしての比較データなし。",
+  "summary": {
+    "passed": 0,
+    "failed": 6,
+    "total": 6,
+    "pass_rate": 0.0
+  }
+}

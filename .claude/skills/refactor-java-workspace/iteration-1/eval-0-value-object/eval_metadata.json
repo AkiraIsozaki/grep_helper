@@ -1,0 +1,37 @@
+{
+  "eval_id": 0,
+  "eval_name": "value-object-for-pivot-cell",
+  "prompt": "StepViewModelのpivotCellプロパティが int[] で行・列を管理しています。int[0]が行、int[1]が列という暗黙の規約があり、ドキュメントなしでは意味がわかりません。Value Objectに変えてください。プロジェクトのディレクトリは /workspaces/claude-code-book-chapter8-main です。",
+  "assertions": [
+    {
+      "id": "vo_class_created",
+      "text": "新しいValue ObjectクラスまたはRecordが作成されている (CellPosition等)",
+      "type": "file_exists_or_grep"
+    },
+    {
+      "id": "int_array_removed_from_viewmodel",
+      "text": "StepViewModelからint[]によるpivot管理が削除されている",
+      "type": "code_change"
+    },
+    {
+      "id": "test_updated",
+      "text": "StepViewModelTestがValue Objectを使うよう更新されている",
+      "type": "code_change"
+    },
+    {
+      "id": "docs_updated",
+      "text": "docs/以下の少なくとも1つのファイルが更新されている",
+      "type": "docs_changed"
+    },
+    {
+      "id": "steering_created",
+      "text": ".steering/以下に新しいステアリングファイルディレクトリが作成されている",
+      "type": "file_exists"
+    },
+    {
+      "id": "build_passes",
+      "text": "./gradlew build が成功する",
+      "type": "command_passes"
+    }
+  ]
+}

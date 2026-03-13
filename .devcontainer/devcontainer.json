@@ -1,0 +1,20 @@
+{
+  "name": "python-cli-dev",
+
+  "image": "mcr.microsoft.com/devcontainers/python:3.12-bookworm",
+
+  "workspaceFolder": "/workspaces/grep_helper",
+
+  "features": {
+    "ghcr.io/anthropics/devcontainer-features/claude-code:1.0": {}
+  },
+
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-python.vscode-pylance"
+      ]
+    }
+  }
+}
