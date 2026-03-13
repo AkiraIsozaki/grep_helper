@@ -54,15 +54,15 @@
 ## フェーズ3: 品質チェックと修正
 
 - [ ] すべてのテストが通ることを確認
-  - [ ] `./gradlew test`
+  - [ ] `python -m unittest discover`
 - [ ] コード品質チェックが通ることを確認
-  - [ ] `./gradlew check`
-- [ ] ビルドが成功することを確認
-  - [ ] `./gradlew build`
+  - [ ] `python -m flake8 .`
+- [ ] 構文エラーがないことを確認
+  - [ ] `python -m py_compile analyze.py`
 
 ## フェーズ4: ドキュメント更新
 
-- [ ] README.md を更新（必要に応じて）
+- [ ] README.txt / README.md を更新（必要に応じて）
 - [ ] 実装後の振り返り（このファイルの下部に記録）
 
 ---

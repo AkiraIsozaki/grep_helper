@@ -4,31 +4,31 @@
 
 ```
 project-root/
-├── src/
-│   ├── main/
-│   │   ├── java/              # Javaソースコード
-│   │   │   └── com/example/app/
-│   │   │       ├── [layer1]/  # [説明]
-│   │   │       ├── [layer2]/  # [説明]
-│   │   │       └── [layer3]/  # [説明]
-│   │   └── resources/         # リソースファイル
-│   │       └── fxml/          # JavaFX FXMLファイル
-│   └── test/
-│       └── java/              # テストコード
-│           └── com/example/app/
-│               ├── unit/          # ユニットテスト
-│               ├── integration/   # 統合テスト
-│               └── e2e/           # E2Eテスト
-├── docs/                      # プロジェクトドキュメント
-├── config/                    # 設定ファイル（該当する場合）
-└── scripts/                   # ビルド・デプロイスクリプト
+├── analyze.py           # エントリーポイント（またはsrc/配下に分割）
+├── src/                 # ソースコード（オプション、小規模なら不要）
+│   ├── __init__.py
+│   ├── [module1].py     # [説明]
+│   ├── [module2].py     # [説明]
+│   └── [module3].py     # [説明]
+├── tests/               # テストコード
+│   ├── unit/            # ユニットテスト
+│   └── integration/     # 統合テスト
+├── docs/                # プロジェクトドキュメント
+├── input/               # 入力ファイル配置ディレクトリ（.gitkeep）
+├── output/              # 出力ファイル配置ディレクトリ（.gitkeep）
+├── requirements.txt     # 依存ライブラリ
+├── setup.sh             # venv作成スクリプト（Unix/Mac）
+├── setup.bat            # venv作成スクリプト（Windows）
+├── run.sh               # 実行ラッパー（Unix/Mac）
+├── run.bat              # 実行ラッパー（Windows）
+└── README.txt           # 利用者向け手順書
 ```
 
 ## ディレクトリ詳細
 
-### src/main/java/ (ソースコードディレクトリ)
+### src/ (ソースコードディレクトリ)
 
-#### [パッケージ1]
+#### [モジュール1]
 
 **役割**: [説明]
 
@@ -41,17 +41,17 @@ project-root/
 - [規則2]
 
 **依存関係**:
-- 依存可能: [パッケージ名]
-- 依存禁止: [パッケージ名]
+- 依存可能: [モジュール名]
+- 依存禁止: [モジュール名]
 
 **例**:
 ```
-[パッケージ名]/
-├── [ExampleFile1].java
-└── [ExampleFile2].java
+src/
+├── [module1].py
+└── [module2].py
 ```
 
-#### [パッケージ2]
+#### [モジュール2]
 
 **役割**: [説明]
 
@@ -62,10 +62,10 @@ project-root/
 - [規則1]
 
 **依存関係**:
-- 依存可能: [パッケージ名]
-- 依存禁止: [パッケージ名]
+- 依存可能: [モジュール名]
+- 依存禁止: [モジュール名]
 
-### src/test/java/ (テストディレクトリ)
+### tests/ (テストディレクトリ)
 
 #### unit/
 
@@ -73,14 +73,13 @@ project-root/
 
 **構造**:
 ```
-src/test/java/com/example/app/unit/
-└── [layer]/
-    └── [ClassName]Test.java
+tests/unit/
+└── test_[module_name].py
 ```
 
 **命名規則**:
-- パターン: `[テスト対象クラス名]Test.java`
-- 例: `TaskService.java` → `TaskServiceTest.java`
+- パターン: `test_[テスト対象モジュール名].py`
+- 例: `parser.py` → `test_parser.py`
 
 #### integration/
 
@@ -88,20 +87,8 @@ src/test/java/com/example/app/unit/
 
 **構造**:
 ```
-src/test/java/com/example/app/integration/
-└── [feature]/
-    └── [Scenario]Test.java
-```
-
-#### e2e/
-
-**役割**: E2Eテストの配置
-
-**構造**:
-```
-src/test/java/com/example/app/e2e/
-└── [userscenario]/
-    └── [Flow]Test.java
+tests/integration/
+└── test_[feature].py
 ```
 
 ### docs/ (ドキュメントディレクトリ)
@@ -114,42 +101,39 @@ src/test/java/com/example/app/e2e/
 - `development-guidelines.md`: 開発ガイドライン
 - `glossary.md`: 用語集
 
-### src/main/resources/ (リソースディレクトリ)
+### input/ / output/ (データディレクトリ)
 
 **配置ファイル**:
-- JavaFX FXMLファイル
-- アプリケーション設定ファイル
-- 画像・CSSなどのアセット
+- `input/`: ユーザーが入力ファイルを配置する
+- `output/`: ツールが出力ファイルを生成する
 
 **例**:
 ```
-src/main/resources/
-├── fxml/
-│   └── main-view.fxml
-├── css/
-│   └── styles.css
-└── application.properties
+input/
+├── .gitkeep
+└── TARGET.grep      # ユーザーが配置するgrep結果ファイル
+
+output/
+├── .gitkeep
+└── TARGET.tsv       # ツールが生成するTSVファイル
 ```
 
 ### config/ (設定ファイルディレクトリ - 該当する場合)
 
 **配置ファイル**:
-- Checkstyle設定ファイル
+- 静的解析設定ファイル（flake8、mypy等）
 - その他ツール設定ファイル
 
 **例**:
 ```
 config/
-├── checkstyle/
-│   └── checkstyle.xml
-└── spotbugs/
-    └── exclude-filter.xml
+└── .flake8          # flake8設定
 ```
 
 ### scripts/ (スクリプトディレクトリ - 該当する場合)
 
 **配置ファイル**:
-- ビルドスクリプト
+- セットアップスクリプト
 - 開発補助スクリプト
 
 ## ファイル配置規則
@@ -158,88 +142,86 @@ config/
 
 | ファイル種別 | 配置先 | 命名規則 | 例 |
 |------------|--------|---------|-----|
-| [種別1] | [パッケージ] | [規則] | [例] |
-| [種別2] | [パッケージ] | [規則] | [例] |
+| [種別1] | [ディレクトリ] | [規則] | [例] |
+| [種別2] | [ディレクトリ] | [規則] | [例] |
 
 ### テストファイル
 
 | テスト種別 | 配置先 | 命名規則 | 例 |
 |-----------|--------|---------|-----|
-| ユニットテスト | src/test/java/.../unit/ | [対象]Test.java | TaskServiceTest.java |
-| 統合テスト | src/test/java/.../integration/ | [機能]Test.java | TaskCrudTest.java |
-| E2Eテスト | src/test/java/.../e2e/ | [シナリオ]Test.java | UserWorkflowTest.java |
+| ユニットテスト | tests/unit/ | test_[対象].py | test_parser.py |
+| 統合テスト | tests/integration/ | test_[機能].py | test_analyze.py |
 
 ### 設定ファイル
 
 | ファイル種別 | 配置先 | 命名規則 |
 |------------|--------|---------|
-| アプリケーション設定 | src/main/resources/ | application.properties |
-| ビルド設定 | プロジェクトルート | build.gradle |
-| コード品質 | config/ | checkstyle.xml |
+| 依存ライブラリ | プロジェクトルート | requirements.txt |
+| Python仮想環境 | プロジェクトルート | .venv/ |
+| コード品質 | プロジェクトルート | .flake8 / setup.cfg |
 
 ## 命名規則
 
-### パッケージ名
+### ディレクトリ名
 
-- **レイヤーパッケージ**: 単数形、小文字
-  - 例: `service/`, `repository/`, `controller/`
-- **機能パッケージ**: 小文字（ハイフン不可）
-  - 例: `taskmanagement/`, `userauthentication/`
+- **パッケージ/モジュールディレクトリ**: snake_case
+  - 例: `grep_parser/`, `usage_classifier/`
+- **テストディレクトリ**: `tests/`（複数形）
 
 ### ファイル名
 
-- **クラスファイル**: PascalCase
-  - 例: `TaskService.java`, `UserRepository.java`
-- **インターフェース**: PascalCase
-  - 例: `ITaskService.java`, `TaskRepository.java`
-- **列挙型**: PascalCase
-  - 例: `TaskStatus.java`, `Priority.java`
+- **モジュールファイル**: snake_case
+  - 例: `grep_parser.py`, `usage_classifier.py`
+- **データクラス/Enum**: PascalCase（クラス名）
+  - 例: `class GrepRecord`, `class UsageType`
 
 ### テストファイル名
 
-- パターン: `[テスト対象クラス名]Test.java`
-- 例: `TaskServiceTest.java`, `TaskRepositoryTest.java`
+- パターン: `test_[テスト対象モジュール名].py`
+- 例: `test_grep_parser.py`, `test_usage_classifier.py`
 
 ## 依存関係のルール
 
 ### レイヤー間の依存
 
 ```
-UIレイヤー (controller)
+エントリーポイント (analyze.py)
     ↓ (OK)
-サービスレイヤー (service)
+処理レイヤー (src/parser.py, src/classifier.py)
     ↓ (OK)
-データレイヤー (repository)
+モデル/ユーティリティ (src/models.py, src/utils.py)
 ```
 
 **禁止される依存**:
-- データレイヤー → サービスレイヤー
-- データレイヤー → UIレイヤー
-- サービスレイヤー → UIレイヤー
+- モデル → 処理レイヤー
+- 処理レイヤー → エントリーポイント
 
 ### モジュール間の依存
 
 **循環依存の禁止**:
-```java
-// ❌ 悪い例: 循環依存
-// FileA.java
-import com.example.app.service.FileB;
+```python
+# ❌ 悪い例: 循環依存
+# src/classifier.py
+from src.tracker import IndirectTracker
 
-// FileB.java
-import com.example.app.service.FileA;  // 循環依存
+# src/tracker.py
+from src.classifier import classify_usage  # 循環依存
 ```
 
 **解決策**:
-```java
-// ✅ 良い例: 共通インターフェースの抽出
-// SharedType.java
-public interface SharedType { /* ... */ }
+```python
+# ✅ 良い例: 共通モデルの抽出
+# src/models.py
+from dataclasses import dataclass
 
-// FileA.java
-import com.example.app.model.SharedType;
+@dataclass(frozen=True)
+class GrepRecord: ...
 
-// FileB.java
-import com.example.app.model.SharedType;
+# src/classifier.py
+from src.models import GrepRecord
+
+# src/tracker.py
+from src.models import GrepRecord
 ```
 
 ## スケーリング戦略
@@ -248,19 +230,19 @@ import com.example.app.model.SharedType;
 
 新しい機能を追加する際の配置方針:
 
-1. **小規模機能**: 既存パッケージに配置
-2. **中規模機能**: レイヤー内にサブパッケージを作成
-3. **大規模機能**: 独立したモジュールとして分離
+1. **小規模機能**: 既存モジュールに関数を追加
+2. **中規模機能**: 新しいモジュールファイルを作成
+3. **大規模機能**: サブパッケージとして分離
 
 **例**:
 ```
-src/main/java/com/example/app/
-├── service/
-│   ├── TaskService.java             # 既存機能
-│   └── task/                        # 中規模機能の分離
-│       ├── TaskService.java
-│       ├── SubtaskService.java
-│       └── TaskCategoryService.java
+src/
+├── parser.py               # 既存機能
+└── tracker/                # 大規模機能の分離
+    ├── __init__.py
+    ├── constant_tracker.py
+    ├── field_tracker.py
+    └── getter_tracker.py
 ```
 
 ### ファイルサイズの管理
@@ -271,14 +253,15 @@ src/main/java/com/example/app/
 - 500行以上: 分割を強く推奨
 
 **分割方法**:
-```java
-// 悪い例: 1ファイルに全機能
-// TaskService.java (800行)
+```python
+# 悪い例: 1ファイルに全機能
+# analyze.py (1000行)
 
-// 良い例: 責務ごとに分割
-// TaskService.java (200行) - CRUD操作
-// TaskValidationService.java (150行) - バリデーション
-// TaskNotificationService.java (100行) - 通知処理
+# 良い例: 責務ごとに分割
+# analyze.py (100行) - エントリーポイント・CLIパース
+# src/parser.py (200行) - grep結果パース
+# src/classifier.py (300行) - 使用タイプ分類
+# src/tracker.py (400行) - 間接参照追跡
 ```
 
 ## 特殊ディレクトリ
@@ -315,19 +298,20 @@ src/main/java/com/example/app/
 ### .gitignore
 
 プロジェクトで除外すべきファイル:
-- `.gradle/`
-- `build/`
+- `.venv/`
+- `__pycache__/`
+- `*.pyc`
+- `*.pyo`
 - `.env`
 - `.steering/` (タスク管理用の一時ファイル)
 - `*.log`
 - `.DS_Store`
-- `*.class`
-- `.idea/`
-- `*.iml`
+- `dist/`
+- `*.egg-info/`
 
-### Gradle / コード品質ツール
+### コード品質ツール
 
 ツールで除外すべきディレクトリ:
-- `build/`
-- `.gradle/`
+- `.venv/`
+- `__pycache__/`
 - `.steering/`

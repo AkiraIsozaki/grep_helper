@@ -12,14 +12,14 @@
 ```
 
 **良い例**:
-```java
-// ✅ 良い例: 役割が明確
-UserAuthenticationService userAuthentication = new UserAuthenticationService();
-MatrixRepository matrixRepository = new MatrixRepository();
+```python
+# ✅ 良い例: 役割が明確
+grep_records: list[dict] = []
+ast_cache: dict[str, object] = {}
 
-// ❌ 悪い例: 曖昧
-Object auth = new Service();
-Object repo = new Repository();
+# ❌ 悪い例: 曖昧
+data: list = []
+cache: dict = {}
 ```
 
 ### 2. 理由を説明する
@@ -111,21 +111,16 @@ BREAKING CHANGE: 破壊的変更 (major version up)
 **良いコミットメッセージの例**:
 
 ```
-feat(matrix): 行列の固有値計算機能を追加
+feat(tracker): getter経由の間接参照追跡機能を追加
 
-ユーザーが行列の固有値と固有ベクトルを計算できるようになりました。
+フィールドに代入された値がgetter経由で使われる箇所を追跡する。
 
 実装内容:
-- MatrixモデルにeigenValues()メソッド追加
-- GUIに固有値計算パネル追加
-- 計算結果の可視化機能実装
+- 命名規則（type → getType()）によるgetter候補特定
+- return文解析による非標準命名のgetter検出
+- プロジェクト全体でのgetter呼び出し箇所をAST解析
 
-破壊的変更:
-- Matrix型の構造が変更されました
-- 既存の保存データはマイグレーションが必要です
-
-Closes #123
-BREAKING CHANGE: Matrixクラスにdimension必須フィールド追加
+Closes #12
 ```
 
 ### プルリクエストのテンプレート
@@ -189,88 +184,66 @@ Refs #[番号]
 
 ### テストの書き方
 
-**Given-When-Then パターン**:
+**Arrange-Act-Assert パターン**:
 
-```java
-class MatrixServiceTest {
+```python
+import unittest
 
-    @Nested
-    @DisplayName("行列の生成")
-    class CreateMatrix {
+class TestGrepParser(unittest.TestCase):
 
-        @Test
-        @DisplayName("正常なデータの場合、行列を生成できる")
-        void shouldCreateMatrixWithValidData() {
-            // Given: 準備
-            MatrixRepository mockRepository = mock(MatrixRepository.class);
-            MatrixService service = new MatrixService(mockRepository);
-            double[][] validData = {{1, 2}, {3, 4}};
+    def test_parse_valid_grep_line_returns_record(self):
+        # Arrange: 準備
+        parser = GrepParser()
+        line = "src/main/Constants.java:10:    public static final String CODE = \"VALUE\";"
 
-            // When: 実行
-            Matrix result = service.create(validData);
+        # Act: 実行
+        result = parser.parse_line(line)
 
-            // Then: 検証
-            assertNotNull(result.getId());
-            assertArrayEquals(validData, result.getData());
-        }
+        # Assert: 検証
+        self.assertIsNotNone(result)
+        self.assertEqual(result.filepath, "src/main/Constants.java")
+        self.assertEqual(result.lineno, "10")
 
-        @Test
-        @DisplayName("不正な次元の場合、IllegalArgumentExceptionをスローする")
-        void shouldThrowExceptionForInvalidDimensions() {
-            // Given: 準備
-            MatrixRepository mockRepository = mock(MatrixRepository.class);
-            MatrixService service = new MatrixService(mockRepository);
-            double[][] invalidData = {{1, 2}, {3}};
+    def test_parse_binary_notice_line_returns_none(self):
+        # Arrange: 準備
+        parser = GrepParser()
+        line = "Binary file src/main/resources/logo.png matches"
 
-            // When/Then: 実行と検証
-            assertThrows(IllegalArgumentException.class, () ->
-                service.create(invalidData)
-            );
-        }
-    }
-}
+        # Act: 実行
+        result = parser.parse_line(line)
+
+        # Assert: 検証
+        self.assertIsNone(result)
 ```
 
 ### カバレッジ目標
 
 **測定可能な目標**:
 
-```groovy
-// build.gradle - JaCoCo設定
-plugins {
-    id 'jacoco'
-}
+```bash
+# coverage.py を使用してカバレッジを測定
+pip install coverage
+coverage run -m unittest discover
+coverage report --fail-under=80
+coverage html  # HTMLレポート生成
+```
 
-jacocoTestCoverageVerification {
-    violationRules {
-        rule {
-            limit {
-                counter = 'LINE'
-                minimum = 0.80
-            }
-            limit {
-                counter = 'BRANCH'
-                minimum = 0.80
-            }
-        }
-        rule {
-            includes = ['com.linalgpad.service.*']
-            limit {
-                counter = 'LINE'
-                minimum = 0.90
-            }
-            limit {
-                counter = 'BRANCH'
-                minimum = 0.90
-            }
-        }
-    }
-}
+**設定例（setup.cfg）**:
+```ini
+[coverage:run]
+source = src
+omit =
+    tests/*
+    .venv/*
+
+[coverage:report]
+fail_under = 80
+show_missing = True
 ```
 
 **理由**:
-- 重要なビジネスロジック(service/)は高いカバレッジを要求
-- UI層(JavaFX Controller等)は低めでも許容
+- 重要なビジネスロジック（classifier.py, tracker.py）は高いカバレッジを要求
+- エントリーポイント（analyze.py）は低めでも許容
 - 100%を目指さない (コストと効果のバランス)
 
 ## コードレビュープロセス
@@ -292,22 +265,22 @@ jacocoTestCoverageVerification {
 
 ## ✅ 良い例
 この実装だと O(n²) の時間計算量になります。
-Map を使うと O(n) に改善できます:
+dict を使うと O(1) に改善できます:
 
-```java
-Map<String, Matrix> matrixMap = matrices.stream()
-    .collect(Collectors.toMap(Matrix::getId, Function.identity()));
-List<Matrix> result = ids.stream()
-    .map(matrixMap::get)
-    .collect(Collectors.toList());
+```python
+ast_cache: dict[str, object] = {}
+tree = ast_cache.get(filepath)
+if tree is None:
+    tree = parse_java_file(filepath)
+    ast_cache[filepath] = tree
 ```
 ```
 
 2. **優先度の明示**
 ```markdown
-[必須] セキュリティ: パスワードがログに出力されています
-[推奨] パフォーマンス: ループ内でのDB呼び出しを避けましょう
-[提案] 可読性: このメソッド名をもっと明確にできませんか？
+[必須] セキュリティ: ファイルパスのトラバーサル対策が必要です
+[推奨] パフォーマンス: 同一ファイルのAST再解析を避けましょう
+[提案] 可読性: この関数名をもっと明確にできませんか？
 [質問] この処理の意図を教えてください
 ```
 
@@ -349,39 +322,35 @@ List<Matrix> result = ids.stream()
 **自動化項目と採用ツール**:
 
 1. **静的解析**
-   - **Checkstyle**
-     - Javaのコーディング規約を自動チェック
-     - Google Java Styleなど標準ルールセットを適用可能
-     - 設定ファイル: `config/checkstyle/checkstyle.xml`
-   - **SpotBugs**
-     - バイトコード解析による潜在的バグの自動検出
-     - NullPointerExceptionやリソースリークなどを事前に発見
-     - Gradleプラグインで容易に導入
+   - **flake8**
+     - PEP 8準拠チェック・未使用インポート検出
+     - 設定ファイル: `.flake8` または `setup.cfg`
+   - **mypy** (任意)
+     - 型アノテーションの静的型チェック
+     - `mypy analyze.py` で実行
 
 2. **コードフォーマット**
-   - **google-java-format** (任意)
-     - Google Java Styleに基づく自動整形
-     - IDE連携またはGradleタスクで適用
+   - **black** (任意)
+     - Pythonコードの自動整形
+     - `black .` で適用
      - レビュー時のスタイル議論を削減
 
-3. **コンパイルチェック**
-   - **javac (Gradle compileJavaタスク)**
-     - Java 17+の型チェックとコンパイルエラー検出
-     - `-Xlint:all`オプションで警告を網羅的に検出
-     - 設定ファイル: `build.gradle`
+3. **構文チェック**
+   - **py_compile**
+     - Python標準の構文チェック
+     - `python -m py_compile analyze.py`
 
 4. **テスト実行**
-   - **JUnit 5**
-     - Java標準のテスティングフレームワーク
-     - `@Nested`によるテスト構造化、`@DisplayName`による日本語テスト名
-     - JaCoCoによるカバレッジ測定を組み合わせて使用
-     - Gradleの`test`タスクで実行
+   - **unittest**
+     - Python標準のテスティングフレームワーク
+     - `python -m unittest discover` で自動検出・実行
+   - **coverage** (任意)
+     - `coverage run -m unittest discover` でカバレッジ測定
 
-5. **ビルド確認**
-   - **Gradle**
-     - `./gradlew build`で コンパイル・テスト・静的解析を一括実行
-     - `build.gradle`で依存関係とビルド設定を一元管理
-     - JavaFXプラグインでGUIアプリのパッケージングにも対応
+5. **ビルド確認（パッケージング）**
+   - **Makefile**
+     - `make package` でzipファイルを生成
+     - `make test` でテスト実行
 
 **実装方法**:
 
@@ -395,52 +364,26 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-python@v5
         with:
-          distribution: 'temurin'
-          java-version: '17'
-      - uses: gradle/actions/setup-gradle@v4
-      - run: ./gradlew check
-      - run: ./gradlew build
+          python-version: '3.11'
+      - run: pip install -r requirements.txt
+      - run: python -m unittest discover
+      - run: python -m flake8 .
 ```
 
-**2. Pre-commit フック (Gradle タスク + Git フック)**
-```groovy
-// build.gradle
-plugins {
-    id 'java'
-    id 'application'
-    id 'checkstyle'
-    id 'jacoco'
-}
-
-java {
-    toolchain {
-        languageVersion = JavaLanguageVersion.of(17)
-    }
-}
-
-tasks.named('test') {
-    useJUnitPlatform()
-    finalizedBy jacocoTestReport
-}
-
-checkstyle {
-    toolVersion = '10.12.5'
-    configFile = file("config/checkstyle/checkstyle.xml")
-}
-
-// Pre-commitフック登録タスク
-tasks.register('installGitHooks', Copy) {
-    from 'scripts/pre-commit'
-    into '.git/hooks'
-    fileMode 0755
-}
-```
+**2. Pre-commit フック**
 ```bash
-# scripts/pre-commit
+# .git/hooks/pre-commit
 #!/bin/bash
-./gradlew check
+set -e
+python -m py_compile analyze.py
+python -m unittest discover
+python -m flake8 .
+```
+
+```bash
+chmod +x .git/hooks/pre-commit
 ```
 
 **導入効果**:
@@ -449,9 +392,9 @@ tasks.register('installGitHooks', Copy) {
 - 早期発見により、修正コストを最大80%削減（バグ検出が本番後の場合と比較）
 
 **この構成を選んだ理由**:
-- Java 17+エコシステムにおける標準的かつ安定した構成
-- Gradleによりビルド・テスト・静的解析を統一的に管理
-- JUnit 5とJaCoCoの組み合わせにより、テストとカバレッジ測定がシームレスに連携
+- Python標準ライブラリ(unittest)を中心とした軽量な構成
+- flake8とcoverageの組み合わせでテストと品質チェックがシームレスに連携
+- 外部依存を最小化（javalangのみ）
 
 ## チェックリスト
 

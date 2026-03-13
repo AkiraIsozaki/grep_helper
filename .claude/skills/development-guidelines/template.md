@@ -4,42 +4,43 @@
 
 ### 命名規則
 
-#### 変数・メソッド
+#### 変数・関数
 
-**Java**:
-```java
-// 良い例
-UserProfile userProfileData = userService.fetchUserProfile();
-public int calculateTotalPrice(List<CartItem> items) { }
+**Python**:
+```python
+# 良い例
+user_profile_data = fetch_user_profile()
+def calculate_total_price(items: list[dict]) -> float: ...
 
-// 悪い例
-Object data = fetch();
-public int calc(List<?> arr) { }
+# 悪い例
+data = fetch()
+def calc(arr): ...
 ```
 
 **原則**:
-- 変数: camelCase、名詞または名詞句
-- メソッド: camelCase、動詞で始める
-- 定数: UPPER_SNAKE_CASE（`static final`）
-- Boolean: `is`, `has`, `should`で始める
+- 変数: snake_case、名詞または名詞句
+- 関数: snake_case、動詞で始める
+- 定数: UPPER_SNAKE_CASE
+- Boolean: `is_`, `has_`, `should_` で始める
 
-#### クラス・インターフェース
+#### クラス・列挙型
 
-```java
-// クラス: PascalCase、名詞
-public class TaskManager { }
-public class UserAuthenticationService { }
+```python
+# クラス: PascalCase、名詞
+class GrepAnalyzer: ...
+class UsageClassifier: ...
 
-// インターフェース: PascalCase、I接頭辞なし（Java慣例）
-public interface TaskRepository { }
-public interface Task { }
+# Enum: PascalCase、値はわかりやすい文字列
+from enum import Enum
 
-// 列挙型: PascalCase、値はUPPER_SNAKE_CASE
-public enum TaskStatus {
-    TODO,
-    IN_PROGRESS,
-    COMPLETED
-}
+class UsageType(Enum):
+    CONSTANT = "定数定義"
+    VARIABLE = "変数代入"
+    CONDITION = "条件判定"
+    RETURN = "return文"
+    ARGUMENT = "メソッド引数"
+    ANNOTATION = "アノテーション"
+    OTHER = "その他"
 ```
 
 ### コードフォーマット
@@ -49,50 +50,53 @@ public enum TaskStatus {
 **行の長さ**: 最大120文字
 
 **例**:
-```java
-// Java コードフォーマット例
-public class MatrixOperations {
+```python
+# Python コードフォーマット例
+from dataclasses import dataclass
 
-    private final int rows;
-    private final int cols;
-
-    public MatrixOperations(int rows, int cols) {
-        this.rows = rows;
-        this.cols = cols;
-    }
-
-    public double[][] multiply(double[][] a, double[][] b) {
-        // 実装
-    }
-}
+@dataclass(frozen=True)
+class GrepRecord:
+    keyword: str
+    ref_type: str       # 直接 / 間接 / 間接（getter経由）
+    usage_type: str
+    filepath: str
+    lineno: str
+    code: str
+    src_var: str = ""
+    src_file: str = ""
+    src_lineno: str = ""
 ```
 
 ### コメント規約
 
-**クラス・メソッドのドキュメント（Javadoc）**:
-```java
-/**
- * タスクの合計数を計算する。
- *
- * @param tasks  計算対象のタスクリスト
- * @param filter フィルター条件（nullの場合フィルターなし）
- * @return タスクの合計数
- * @throws ValidationException タスクリストが不正な場合
- */
-public int countTasks(List<Task> tasks, TaskFilter filter) {
-    // 実装
-}
+**関数・クラスのドキュメント（docstring）**:
+```python
+def classify_usage(code: str) -> str:
+    """コード行を解析し、使用タイプを返す。
+
+    Args:
+        code: 分類対象のコード行（前後の空白はtrim済み）
+
+    Returns:
+        使用タイプ文字列（7種のいずれか）
+
+    Raises:
+        ValueError: codeがNoneの場合
+    """
+    ...
 ```
 
 **インラインコメント**:
-```java
-// 良い例: なぜそうするかを説明
-// キャッシュを無効化して、最新データを取得
-cache.clear();
+```python
+# 良い例: なぜそうするかを説明
+# キャッシュを使い、同一ファイルの再解析を避ける
+if filepath not in ast_cache:
+    ast_cache[filepath] = parse_java_file(filepath)
 
-// 悪い例: 何をしているか（コードを見れば分かる）
-// キャッシュをクリアする
-cache.clear();
+# 悪い例: 何をしているか（コードを見れば分かる）
+# キャッシュを確認する
+if filepath not in ast_cache:
+    ...
 ```
 
 ### エラーハンドリング
@@ -103,38 +107,22 @@ cache.clear();
 - 例外を無視しない
 
 **例**:
-```java
-// 例外クラス定義
-public class ValidationException extends RuntimeException {
+```python
+# 例外クラス定義
+class ValidationError(ValueError):
+    def __init__(self, message: str, field: str, value: object):
+        super().__init__(message)
+        self.field = field
+        self.value = value
 
-    private final String field;
-    private final Object value;
-
-    public ValidationException(String message, String field, Object value) {
-        super(message);
-        this.field = field;
-        this.value = value;
-    }
-
-    public String getField() {
-        return field;
-    }
-
-    public Object getValue() {
-        return value;
-    }
-}
-
-// エラーハンドリング
-try {
-    Task task = taskService.create(data);
-} catch (ValidationException e) {
-    System.err.printf("検証エラー [%s]: %s%n", e.getField(), e.getMessage());
-    // ユーザーにフィードバック
-} catch (Exception e) {
-    System.err.println("予期しないエラー: " + e.getMessage());
-    throw e; // 上位に伝播
-}
+# エラーハンドリング
+try:
+    records = process_file(input_path, keyword)
+except ValidationError as e:
+    print(f"検証エラー [{e.field}]: {e}", file=sys.stderr)
+except Exception as e:
+    print(f"予期しないエラー: {e}", file=sys.stderr)
+    raise  # 上位に伝播
 ```
 
 ## Git運用ルール
@@ -152,9 +140,9 @@ try {
 ```
 main
   └─ develop
-      ├─ feature/matrix-operations
-      ├─ feature/vector-display
-      └─ fix/determinant-calculation
+      ├─ feature/indirect-tracking
+      ├─ feature/getter-tracking
+      └─ fix/parse-error-handling
 ```
 
 ### コミットメッセージ規約
@@ -179,22 +167,21 @@ main
 
 **例**:
 ```
-feat(matrix): 行列の固有値計算機能を追加
+feat(tracker): getter経由の間接参照追跡機能を追加
 
-ユーザーが行列の固有値を計算できるようにしました。
-- Matrixクラスにeigenvaluesメソッドを追加
-- 固有値計算結果の表示パネルを実装
-- 2x2および3x3行列に対応
+フィールドに代入された値がgetter経由で使われる箇所を追跡する。
+- 命名規則（type → getType()）によるgetter候補特定
+- return文解析による非標準命名のgetter検出
+- プロジェクト全体でのgetter呼び出し箇所のAST解析
 
-Closes #123
+Closes #12
 ```
 
 ### プルリクエストプロセス
 
 **作成前のチェック**:
-- [ ] 全てのテストがパス (`./gradlew test`)
-- [ ] Lintエラーがない
-- [ ] コンパイルが通る (`./gradlew build`)
+- [ ] 全てのテストがパス (`python -m unittest discover`)
+- [ ] 構文エラーがない (`python -m py_compile analyze.py`)
 - [ ] 競合が解決されている
 
 **PRテンプレート**:
@@ -213,9 +200,6 @@ Closes #123
 - [ ] ユニットテスト追加
 - [ ] 手動テスト実施
 
-## スクリーンショット（該当する場合）
-[画像]
-
 ## 関連Issue
 Closes #[Issue番号]
 ```
@@ -233,38 +217,32 @@ Closes #[Issue番号]
 
 #### ユニットテスト
 
-**対象**: 個別のメソッド・クラス
+**対象**: 個別の関数・クラス
 
 **カバレッジ目標**: 80%
 
 **例**:
-```java
-class TaskServiceTest {
+```python
+import unittest
 
-    private TaskRepository mockRepository;
-    private TaskService service;
+class TestUsageClassifier(unittest.TestCase):
 
-    @BeforeEach
-    void setUp() {
-        mockRepository = mock(TaskRepository.class);
-        service = new TaskService(mockRepository);
-    }
+    def setUp(self):
+        self.classifier = UsageClassifier()
 
-    @Test
-    void create_validData_createsTask() {
-        Task task = service.create("テストタスク", "説明");
+    def test_classify_constant_definition(self):
+        code = 'public static final String CODE = "TARGET";'
+        result = self.classifier.classify(code)
+        self.assertEqual(result, "定数定義")
 
-        assertNotNull(task.getId());
-        assertEquals("テストタスク", task.getTitle());
-    }
+    def test_classify_condition(self):
+        code = 'if (x.equals("TARGET")) {'
+        result = self.classifier.classify(code)
+        self.assertEqual(result, "条件判定")
 
-    @Test
-    void create_emptyTitle_throwsValidationException() {
-        assertThrows(ValidationException.class, () -> {
-            service.create("", "説明");
-        });
-    }
-}
+    def test_classify_empty_raises(self):
+        with self.assertRaises(ValueError):
+            self.classifier.classify(None)
 ```
 
 #### 統合テスト
@@ -272,101 +250,63 @@ class TaskServiceTest {
 **対象**: 複数コンポーネントの連携
 
 **例**:
-```java
-class TaskCrudIntegrationTest {
+```python
+import unittest
+from pathlib import Path
 
-    private TaskService taskService;
+class TestAnalyzeIntegration(unittest.TestCase):
 
-    @BeforeEach
-    void setUp() {
-        taskService = new TaskService(new InMemoryTaskRepository());
-    }
+    def setUp(self):
+        self.test_input = Path("tests/fixtures/input")
+        self.test_output = Path("tests/fixtures/output")
 
-    @Test
-    void taskCrud_createReadUpdateDelete_succeeds() {
-        // 作成
-        Task created = taskService.create("テスト", "説明");
-
-        // 取得
-        Task found = taskService.findById(created.getId());
-        assertEquals("テスト", found.getTitle());
-
-        // 更新
-        taskService.update(created.getId(), "更新後", null);
-        Task updated = taskService.findById(created.getId());
-        assertEquals("更新後", updated.getTitle());
-
-        // 削除
-        taskService.delete(created.getId());
-        assertNull(taskService.findById(created.getId()));
-    }
-}
-```
-
-#### E2Eテスト
-
-**対象**: ユーザーシナリオ全体
-
-**例**:
-```java
-class MatrixOperationFlowTest {
-
-    private LinAlgPadApp app;
-
-    @BeforeEach
-    void setUp() {
-        app = new LinAlgPadApp();
-    }
-
-    @Test
-    void userCanInputMatrixAndComputeDeterminant() {
-        // 行列入力
-        app.inputMatrix(new double[][]{{1, 2}, {3, 4}});
-        assertTrue(app.getOutput().contains("行列を入力しました"));
-
-        // 行列表示
-        app.showMatrix();
-        assertTrue(app.getOutput().contains("1.0  2.0"));
-
-        // 行列式計算
-        app.computeDeterminant();
-        assertTrue(app.getOutput().contains("-2.0"));
-    }
-}
+    def test_full_analysis_produces_tsv(self):
+        # 準備: サンプルgrep結果を入力に置く
+        # 実行: 分析を実行する
+        records = analyze(self.test_input, source_dir=Path("tests/fixtures/java"))
+        # 検証: 期待される件数・分類が出力されている
+        self.assertGreater(len(records), 0)
+        direct = [r for r in records if r.ref_type == "直接"]
+        self.assertGreater(len(direct), 0)
 ```
 
 ### テスト命名規則
 
-**パターン**: `[対象]_[条件]_[期待結果]`
+**パターン**: `test_[対象]_[条件]_[期待結果]`
 
 **例**:
-```java
-// 良い例
-@Test void create_emptyTitle_throwsValidationException() { }
-@Test void findById_existingId_returnsTask() { }
-@Test void delete_nonExistentId_throwsNotFoundException() { }
+```python
+# 良い例
+def test_parse_valid_grep_line_returns_dict(self): ...
+def test_parse_binary_notice_line_returns_none(self): ...
+def test_classify_static_final_as_constant_definition(self): ...
 
-// 悪い例
-@Test void test1() { }
-@Test void works() { }
-@Test void shouldWorkCorrectly() { }
+# 悪い例
+def test1(self): ...
+def test_works(self): ...
+def test_should_work_correctly(self): ...
 ```
 
 ### モック・スタブの使用
 
 **原則**:
-- 外部依存（API、DB、ファイルシステム）はモック化
+- 外部依存（ファイルシステム、外部API）はモック化
 - ビジネスロジックは実装を使用
 
 **例**:
-```java
-// Mockitoを使用してリポジトリをモック化
-TaskRepository mockRepository = mock(TaskRepository.class);
-when(mockRepository.findById(1L)).thenReturn(Optional.of(sampleTask));
-when(mockRepository.findAll()).thenReturn(List.of(sampleTask));
+```python
+from unittest.mock import patch, MagicMock
 
-// サービスは実際の実装を使用
-TaskService service = new TaskService(mockRepository);
+class TestGrepParser(unittest.TestCase):
+
+    @patch("builtins.open", new_callable=MagicMock)
+    def test_process_file_reads_grep_lines(self, mock_open):
+        mock_open.return_value.__enter__.return_value = [
+            "src/Constants.java:10:    public static final String CODE = \"TARGET\";\n",
+        ]
+        records = process_file(Path("input/TARGET.grep"), "TARGET")
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0].usage_type, "定数定義")
 ```
 
 ## コードレビュー基準
@@ -379,7 +319,7 @@ TaskService service = new TaskService(mockRepository);
 - [ ] エラーハンドリングが適切か
 
 **可読性**:
-- [ ] 命名が明確か
+- [ ] 命名が明確か（snake_case）
 - [ ] コメントが適切か
 - [ ] 複雑なロジックが説明されているか
 
@@ -390,21 +330,21 @@ TaskService service = new TaskService(mockRepository);
 
 **パフォーマンス**:
 - [ ] 不要な計算がないか
-- [ ] メモリリークの可能性がないか
+- [ ] ASTキャッシュを活用しているか
 - [ ] データ構造やアルゴリズムが適切か
 
 **セキュリティ**:
 - [ ] 入力検証が適切か
+- [ ] ファイルパストラバーサル対策がされているか
 - [ ] 機密情報がハードコードされていないか
-- [ ] 権限チェックが実装されているか
 
 ### レビューコメントの書き方
 
 **建設的なフィードバック**:
 ```markdown
 ## 良い例
-この実装だと、行列サイズが大きくなった時にパフォーマンスが劣化する可能性があります。
-代わりに、ストラッセンのアルゴリズムを検討してはどうでしょうか？
+この実装だと、ファイル数が多い場合にAST再解析が大量発生してパフォーマンスが劣化します。
+`ast_cache: dict[str, object] = {}` でキャッシュする実装を検討してはどうでしょうか？
 
 ## 悪い例
 この書き方は良くないです。
@@ -422,28 +362,30 @@ TaskService service = new TaskService(mockRepository);
 
 | ツール | バージョン | インストール方法 |
 |--------|-----------|-----------------|
-| Java (JDK) | 17+ | devcontainer に含まれる |
-| Gradle | 8.x | Gradle Wrapper (`./gradlew`) を使用 |
-| JavaFX | 17+ | Gradleの依存関係で管理 |
+| Python | 3.8以上 | devcontainer に含まれる |
+| venv | Python標準 | `python -m venv .venv` |
+| javalang | 最新安定版 | `pip install javalang` |
 
 ### セットアップ手順
 
 ```bash
 # 1. リポジトリのクローン
 git clone [URL]
-cd LinAlgPad
+cd grep_analyzer
 
-# 2. ビルドと依存関係の解決
-./gradlew build
+# 2. venv作成と依存関係のインストール
+python -m venv .venv
+source .venv/bin/activate  # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
 
 # 3. テストの実行
-./gradlew test
+python -m unittest discover
 
-# 4. アプリケーションの起動
-./gradlew run
+# 4. ツールの実行
+python analyze.py --source-dir /path/to/javaproject
 ```
 
 ### 推奨開発ツール（該当する場合）
 
-- VS Code + Extension Pack for Java: Java開発の基本拡張機能
-- VS Code + Gradle for Java: Gradleタスクの管理と実行
+- VS Code + Python拡張機能: Python開発の基本拡張機能
+- VS Code + Pylance: 型チェックとインテリセンス

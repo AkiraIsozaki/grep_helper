@@ -124,7 +124,7 @@ stateDiagram-v2
 
 ## データモデル用語
 
-データベース・データ構造に関する用語。
+データ構造・モデルに関する用語。
 
 ### [エンティティ1]
 
@@ -136,7 +136,7 @@ stateDiagram-v2
 
 **関連エンティティ**: [関連するエンティティ]
 
-**制約**: [ユニーク制約、外部キー制約など]
+**制約**: [バリデーション条件など]
 
 ## エラー・例外
 
@@ -153,8 +153,8 @@ stateDiagram-v2
 **エラーコード**: [該当する場合]
 
 **例**:
-```java
-throw new ExceptionClassName("メッセージ");
+```python
+raise ExceptionClassName("メッセージ")
 ```
 
 ## 計算・アルゴリズム(該当する場合)
@@ -170,7 +170,7 @@ throw new ExceptionClassName("メッセージ");
 [数式]
 ```
 
-**実装箇所**: `src/main/java/com/linalgpad/[package]/[ClassName].java`
+**実装箇所**: `src/[module_name].py`
 
 **例**:
 ```
