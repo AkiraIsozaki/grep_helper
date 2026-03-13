@@ -57,7 +57,11 @@
       "Bash(/workspaces/claude-code-book-chapter8-main/.steering/20260308-拡張ロードマップ/design.md:*)",
       "Bash(/workspaces/claude-code-book-chapter8-main/.steering/20260308-拡張ロードマップ/tasklist.md:*)",
       "Bash(mkdir -p /workspaces/claude-code-book-chapter8-main/.steering/20260313-p2-features && touch /workspaces/claude-code-book-chapter8-main/.steering/20260313-p2-features/requirements.md /workspaces/claude-code-book-chapter8-main/.steering/20260313-p2-features/design.md /workspaces/claude-code-book-chapter8-main/.steering/20260313-p2-features/tasklist.md && echo \"Created\")",
-      "Bash(ls /workspaces/grep_helper/.claude/ 2>/dev/null && cat /workspaces/grep_helper/.claude/*.md 2>/dev/null || echo \"No .claude files\")"
+      "Bash(ls /workspaces/grep_helper/.claude/ 2>/dev/null && cat /workspaces/grep_helper/.claude/*.md 2>/dev/null || echo \"No .claude files\")",
+      "Bash(cat > /workspaces/grep_helper/.flake8 << 'EOF'\n[flake8]\nmax-line-length = 120\nexclude =\n    .venv,\n    __pycache__,\n    dist,\n    .steering\nEOF)",
+      "Bash(pip install:*)",
+      "Bash(python -m py_compile analyze.py 2>&1; echo \"exit:$?\")",
+      "Bash(python -m flake8 analyze.py 2>&1; echo \"exit:$?\")"
     ]
   }
 }
