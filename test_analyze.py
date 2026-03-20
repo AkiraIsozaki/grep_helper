@@ -526,7 +526,9 @@ class TestGetAst(unittest.TestCase):
 
     def test_nonexistent_file_cached_as_none(self):
         """存在しないファイルはNoneとしてキャッシュされること。"""
-        from analyze import get_ast
+        from analyze import get_ast, _JAVALANG_AVAILABLE
+        if not _JAVALANG_AVAILABLE:
+            self.skipTest("javalang が未インストールです。")
         get_ast("ghost.java", self.JAVA_DIR)
         self.assertIn("ghost.java", _ast_cache)
         self.assertIsNone(_ast_cache["ghost.java"])
@@ -1213,6 +1215,428 @@ class TestGetAstExceptionHandling(unittest.TestCase):
         self.assertIsNone(result)
         self.assertIn("Bad.java", _ast_cache)
         self.assertIsNone(_ast_cache["Bad.java"])
+
+
+# ---------------------------------------------------------------------------
+# TestIntenseE2E
+# ---------------------------------------------------------------------------
+
+class TestIntenseE2E(unittest.TestCase):
+    """過激な統合テスト。
+
+    重厚長大なマルチモジュール Java プロジェクトを模したフィクスチャを使い、
+    GrepParser → UsageClassifier → IndirectTracker → GetterTracker → TsvWriter
+    の全パイプラインを通して正確に動作することを検証する。
+
+    javalang なしでも実行可能（正規表現フォールバックで全機能を検証）。
+    """
+
+    INTENSE_DIR = Path(__file__).parent / "tests" / "fixtures" / "intense"
+    JAVA_DIR    = INTENSE_DIR / "java"
+    GREP_DIR    = INTENSE_DIR / "grep"
+
+    def setUp(self):
+        import shutil as _shutil
+        self._shutil = _shutil
+        self.output_dir = Path(tempfile.mkdtemp())
+        _ast_cache.clear()
+
+    def tearDown(self):
+        self._shutil.rmtree(self.output_dir, ignore_errors=True)
+        _ast_cache.clear()
+
+    # ------------------------------------------------------------------
+    # ヘルパー
+    # ------------------------------------------------------------------
+
+    def _run_pipeline(
+        self, grep_filename: str
+    ) -> tuple[list[GrepRecord], list[GrepRecord], ProcessStats]:
+        """指定 grep ファイルで全パイプラインを実行し (direct, all, stats) を返す。"""
+        grep_path = self.GREP_DIR / grep_filename
+        keyword   = grep_path.stem
+        stats     = ProcessStats()
+
+        direct_records = process_grep_file(grep_path, keyword, self.JAVA_DIR, stats)
+        all_records: list[GrepRecord] = list(direct_records)
+
+        for record in direct_records:
+            if record.usage_type not in (UsageType.CONSTANT.value, UsageType.VARIABLE.value):
+                continue
+
+            var_name = extract_variable_name(record.code, record.usage_type)
+            if not var_name:
+                continue
+
+            scope = determine_scope(
+                record.usage_type, record.code,
+                record.filepath, self.JAVA_DIR, int(record.lineno),
+            )
+
+            if scope == "project":
+                all_records.extend(
+                    track_constant(var_name, self.JAVA_DIR, record, stats)
+                )
+            elif scope == "class":
+                class_file = _resolve_java_file(record.filepath, self.JAVA_DIR)
+                if class_file:
+                    indirect = track_field(var_name, class_file, record, self.JAVA_DIR, stats)
+                    all_records.extend(indirect)
+                    for getter_name in find_getter_names(var_name, class_file):
+                        all_records.extend(
+                            track_getter_calls(getter_name, self.JAVA_DIR, record, stats)
+                        )
+            elif scope == "method":
+                method_scope = _get_method_scope(record.filepath, self.JAVA_DIR, int(record.lineno))
+                if method_scope:
+                    all_records.extend(
+                        track_local(var_name, method_scope, record, self.JAVA_DIR, stats)
+                    )
+
+        return direct_records, all_records, stats
+
+    def _run_main(self, extra_args: list[str]) -> tuple[int, str, str]:
+        """sys.argv を差し替えて main() を実行し (returncode, stdout, stderr) を返す。"""
+        from io import StringIO
+        from unittest.mock import patch
+        out_buf = StringIO()
+        err_buf = StringIO()
+        with patch("sys.argv", ["analyze.py"] + extra_args), \
+                patch("sys.stdout", out_buf), \
+                patch("sys.stderr", err_buf):
+            try:
+                analyze.main()
+                returncode = 0
+            except SystemExit as e:
+                returncode = int(e.code) if e.code is not None else 0
+        return returncode, out_buf.getvalue(), err_buf.getvalue()
+
+    # ------------------------------------------------------------------
+    # フィクスチャ存在チェック
+    # ------------------------------------------------------------------
+
+    def test_fixtures_exist(self):
+        """フィクスチャディレクトリ・Java ファイル・grep ファイルが揃っていること。"""
+        self.assertTrue(self.JAVA_DIR.exists(), f"JAVA_DIR が存在しない: {self.JAVA_DIR}")
+        self.assertTrue(self.GREP_DIR.exists(), f"GREP_DIR が存在しない: {self.GREP_DIR}")
+
+        expected_java_files = [
+            "com/example/constants/AppConstants.java",
+            "com/example/constants/ErrorCodes.java",
+            "com/example/constants/MessageKeys.java",
+            "com/example/domain/Order.java",
+            "com/example/domain/OrderItem.java",
+            "com/example/domain/OrderStatus.java",
+            "com/example/service/OrderService.java",
+            "com/example/service/ValidationService.java",
+            "com/example/service/NotificationService.java",
+            "com/example/repository/OrderRepository.java",
+            "com/example/util/CodeConverter.java",
+        ]
+        for rel_path in expected_java_files:
+            full = self.JAVA_DIR / rel_path
+            self.assertTrue(full.exists(), f"Java フィクスチャが存在しない: {rel_path}")
+
+        expected_grep_files = ["ORDER_TYPE_NORMAL.grep", "orderStatus.grep"]
+        for gf in expected_grep_files:
+            self.assertTrue((self.GREP_DIR / gf).exists(), f"grep ファイルが存在しない: {gf}")
+
+    # ------------------------------------------------------------------
+    # テスト1: 使用タイプの網羅
+    # ------------------------------------------------------------------
+
+    def test_direct_records_cover_all_usage_types(self):
+        """ORDER_TYPE_NORMAL.grep から 6 種類以上の使用タイプが検出されること。
+
+        期待する使用タイプ:
+        - アノテーション (@ConditionalOnExpression 行)
+        - 定数定義       (AppConstants.java の static final 行)
+        - 条件判定       (if (...) 行、.equals() 行)
+        - return文       (return findByOrderType(...) 行)
+        - 変数代入       (String normalType = ... 行)
+        - メソッド引数   (sendAlert(AppConstants.ORDER_TYPE_NORMAL) 行)
+        - その他         (AppConstants.ORDER_TYPE_NORMAL, だけの行)
+        """
+        direct_records, _, _ = self._run_pipeline("ORDER_TYPE_NORMAL.grep")
+
+        usage_types_found = {r.usage_type for r in direct_records}
+        self.assertIn(UsageType.CONSTANT.value,   usage_types_found, "定数定義が見つからない")
+        self.assertIn(UsageType.CONDITION.value,  usage_types_found, "条件判定が見つからない")
+        self.assertIn(UsageType.RETURN.value,     usage_types_found, "return文が見つからない")
+        self.assertIn(UsageType.VARIABLE.value,   usage_types_found, "変数代入が見つからない")
+        self.assertIn(UsageType.ARGUMENT.value,   usage_types_found, "メソッド引数が見つからない")
+        self.assertGreaterEqual(
+            len(usage_types_found), 6,
+            f"6種類以上を期待するが {len(usage_types_found)} 種類のみ: {usage_types_found}",
+        )
+
+    # ------------------------------------------------------------------
+    # テスト2: バイナリ行・空行スキップ
+    # ------------------------------------------------------------------
+
+    def test_binary_and_empty_lines_skipped(self):
+        """バイナリ行・空行が skipped_lines に計上され valid_lines に含まれないこと。
+
+        ORDER_TYPE_NORMAL.grep:  バイナリ 3行 + 空行 2行 = 5行スキップ
+        orderStatus.grep:        バイナリ 2行 + 空行 1行 = 3行スキップ
+        """
+        # ORDER_TYPE_NORMAL.grep の検証
+        _, _, stats_n = self._run_pipeline("ORDER_TYPE_NORMAL.grep")
+        self.assertGreater(stats_n.skipped_lines, 0, "スキップ行が 0 件")
+        self.assertEqual(
+            stats_n.total_lines,
+            stats_n.valid_lines + stats_n.skipped_lines,
+            "total = valid + skipped を満たさない",
+        )
+
+        # orderStatus.grep の検証
+        _ast_cache.clear()
+        _, _, stats_s = self._run_pipeline("orderStatus.grep")
+        self.assertGreater(stats_s.skipped_lines, 0, "スキップ行が 0 件 (orderStatus)")
+
+    # ------------------------------------------------------------------
+    # テスト3: 定数の間接参照がプロジェクト全体で検出される
+    # ------------------------------------------------------------------
+
+    def test_indirect_constant_tracked_across_multiple_files(self):
+        """ORDER_TYPE_NORMAL（static final 定数）の間接参照が複数の異なるファイルにわたって検出されること。
+
+        AppConstants.java:12 が 'project' スコープとなり、
+        track_constant() によって全 .java ファイルが検索される。
+        """
+        direct_records, all_records, _ = self._run_pipeline("ORDER_TYPE_NORMAL.grep")
+
+        # 定数定義レコードが存在すること
+        constant_records = [
+            r for r in direct_records
+            if r.usage_type == UsageType.CONSTANT.value
+        ]
+        self.assertGreater(len(constant_records), 0, "定数定義レコードが見つからない")
+
+        # 間接参照レコードが存在すること
+        indirect_records = [r for r in all_records if r.ref_type == RefType.INDIRECT.value]
+        self.assertGreater(len(indirect_records), 0, "間接参照レコードが見つからない")
+
+        # 間接参照が複数の異なるファイルにわたること
+        indirect_filepaths = {r.filepath for r in indirect_records}
+        self.assertGreater(
+            len(indirect_filepaths), 3,
+            f"間接参照ファイルが 3 件超を期待するが: {indirect_filepaths}",
+        )
+
+        # 間接参照に src_var="ORDER_TYPE_NORMAL" が設定されていること
+        for r in indirect_records:
+            self.assertEqual(r.src_var, "ORDER_TYPE_NORMAL", f"src_var が不正: {r}")
+
+        # 間接参照の src_file がすべて AppConstants.java であること
+        for r in indirect_records:
+            self.assertIn("AppConstants.java", r.src_file, f"src_file が不正: {r}")
+
+    # ------------------------------------------------------------------
+    # テスト4: フィールドの間接参照が同一クラス内で検出される
+    # ------------------------------------------------------------------
+
+    def test_indirect_field_tracked_within_same_class(self):
+        """orderStatus（private フィールド）の間接参照が Order.java クラス内で検出されること。
+
+        Order.java:13 が 'class' スコープとなり、
+        track_field() によって Order.java 内が検索される。
+        """
+        direct_records, all_records, _ = self._run_pipeline("orderStatus.grep")
+
+        # フィールド定義レコードが存在すること
+        field_records = [
+            r for r in direct_records
+            if r.usage_type == UsageType.VARIABLE.value
+            and "orderStatus" in r.code
+        ]
+        self.assertGreater(len(field_records), 0, "変数代入（フィールド）レコードが見つからない")
+
+        # 間接参照（フィールド経由）レコードが存在すること
+        indirect_records = [r for r in all_records if r.ref_type == RefType.INDIRECT.value]
+        self.assertGreater(len(indirect_records), 0, "間接参照レコードが見つからない")
+
+        # 間接参照ファイルが Order.java を含むこと
+        indirect_fps = [r.filepath for r in indirect_records]
+        order_java_refs = [fp for fp in indirect_fps if "Order.java" in fp]
+        self.assertGreater(len(order_java_refs), 0, "Order.java への間接参照が見つからない")
+
+        # src_var="orderStatus" が設定されていること
+        for r in indirect_records:
+            self.assertEqual("orderStatus", r.src_var, f"src_var が不正: {r}")
+
+    # ------------------------------------------------------------------
+    # テスト5: getter 経由参照の検出
+    # ------------------------------------------------------------------
+
+    def test_getter_calls_detected(self):
+        """orderStatus フィールドの getter 経由参照が検出されること。
+
+        find_getter_names("orderStatus", Order.java) が 'getOrderStatus' を候補として返し、
+        track_getter_calls() が ValidationService.java 内の呼び出しを検出する。
+        """
+        direct_records, all_records, _ = self._run_pipeline("orderStatus.grep")
+
+        getter_records = [r for r in all_records if r.ref_type == RefType.GETTER.value]
+        self.assertGreater(len(getter_records), 0, "getter 経由参照レコードが見つからない")
+
+        # getter 名が getOrderStatus であること（命名規則由来）
+        for r in getter_records:
+            self.assertIn(
+                "getOrderStatus", r.src_var,
+                f"getter 名が期待と異なる: {r.src_var}",
+            )
+
+        # ValidationService.java で呼び出しが検出されること
+        getter_fps = [r.filepath for r in getter_records]
+        validation_refs = [fp for fp in getter_fps if "ValidationService.java" in fp]
+        self.assertGreater(len(validation_refs), 0, "ValidationService.java での getter 呼び出しが未検出")
+
+    # ------------------------------------------------------------------
+    # テスト6: TSV ソート順の検証
+    # ------------------------------------------------------------------
+
+    def test_tsv_output_sorted_by_keyword_filepath_lineno(self):
+        """TSV 出力が 文言 → ファイルパス → 行番号（昇順） でソートされること。"""
+        direct_records, all_records, _ = self._run_pipeline("ORDER_TYPE_NORMAL.grep")
+
+        output_path = self.output_dir / "ORDER_TYPE_NORMAL.tsv"
+        write_tsv(all_records, output_path)
+        self.assertTrue(output_path.exists(), "TSV ファイルが生成されない")
+
+        with open(output_path, encoding="utf-8-sig", newline="") as f:
+            reader = csv.reader(f, delimiter="\t")
+            rows = list(reader)
+
+        self.assertGreater(len(rows), 1, "TSV にデータ行がない")
+
+        # ヘッダー確認
+        header = rows[0]
+        self.assertEqual(header[0], "文言")
+        self.assertEqual(header[3], "ファイルパス")
+        self.assertEqual(header[4], "行番号")
+
+        # ソート順確認: (keyword, filepath, lineno) が昇順であること
+        data_rows = rows[1:]
+        prev_key = None
+        for row in data_rows:
+            keyword_col  = row[0]
+            filepath_col = row[3]
+            lineno_col   = int(row[4]) if row[4].isdigit() else 0
+            current_key  = (keyword_col, filepath_col, lineno_col)
+            if prev_key is not None:
+                self.assertGreaterEqual(
+                    current_key, prev_key,
+                    f"ソート順が崩れている: {prev_key} → {current_key}",
+                )
+            prev_key = current_key
+
+    # ------------------------------------------------------------------
+    # テスト7: 処理統計の正確性
+    # ------------------------------------------------------------------
+
+    def test_stats_accurate(self):
+        """処理統計（total, valid, skipped）が正確に集計されること。
+
+        total_lines == valid_lines + skipped_lines が常に成立すること。
+        両ファイルを処理しても統計が正確に累積されること。
+        """
+        grep_path_n = self.GREP_DIR / "ORDER_TYPE_NORMAL.grep"
+        grep_path_s = self.GREP_DIR / "orderStatus.grep"
+        stats = ProcessStats()
+
+        process_grep_file(grep_path_n, "ORDER_TYPE_NORMAL", self.JAVA_DIR, stats)
+        _ast_cache.clear()
+        process_grep_file(grep_path_s, "orderStatus", self.JAVA_DIR, stats)
+
+        # 基本不変条件
+        self.assertEqual(
+            stats.total_lines,
+            stats.valid_lines + stats.skipped_lines,
+            "total_lines != valid_lines + skipped_lines",
+        )
+
+        # バイナリ行・空行がスキップされていること
+        # ORDER_TYPE_NORMAL.grep: バイナリ3行+空行2行=5
+        # orderStatus.grep: バイナリ2行+空行1行=3
+        self.assertGreaterEqual(stats.skipped_lines, 8, "スキップ行数が期待より少ない")
+
+        # 有効行が十分存在すること
+        # ORDER_TYPE_NORMAL: 15行, orderStatus: 18行
+        self.assertGreaterEqual(stats.valid_lines, 25, "有効行数が期待より少ない")
+
+    # ------------------------------------------------------------------
+    # テスト8: 全体的な量と質（smoke test）
+    # ------------------------------------------------------------------
+
+    def test_indirect_records_exist_in_significant_volume(self):
+        """間接参照が大量かつ複数ファイルにわたって検出されること（定数が広く参照されているため）。
+
+        direct 参照は grep ファイルの行数に依存するが、indirect は実際の Java ファイルを
+        全件検索するため、プロジェクト全体に定数が行き渡るほど多くなる。
+        少なくとも 8 件以上、かつ 4 ファイル以上から検出されることを確認する。
+        """
+        direct_records, all_records, _ = self._run_pipeline("ORDER_TYPE_NORMAL.grep")
+
+        indirect_records = [r for r in all_records if r.ref_type == RefType.INDIRECT.value]
+        indirect_count   = len(indirect_records)
+        indirect_files   = {r.filepath for r in indirect_records}
+
+        self.assertGreaterEqual(
+            indirect_count, 8,
+            f"間接参照が 8 件以上を期待するが {indirect_count} 件のみ",
+        )
+        self.assertGreaterEqual(
+            len(indirect_files), 4,
+            f"間接参照が 4 ファイル以上を期待するが {len(indirect_files)} ファイルのみ: {indirect_files}",
+        )
+
+    # ------------------------------------------------------------------
+    # テスト9: CLI 経由での E2E 実行
+    # ------------------------------------------------------------------
+
+    def test_full_cli_run_produces_tsv_files(self):
+        """CLI（main()）を通じて 2 つの TSV ファイルが正常出力されること。
+
+        - 終了コード 0
+        - ORDER_TYPE_NORMAL.tsv および orderStatus.tsv が生成される
+        - 各 TSV にヘッダー＋データ行が存在する
+        - 'direct' 参照と 'indirect' 参照が両方含まれる（ORDER_TYPE_NORMAL）
+        - stdout に '処理完了' が出力される
+        """
+        rc, out, err = self._run_main([
+            "--source-dir", str(self.JAVA_DIR),
+            "--input-dir",  str(self.GREP_DIR),
+            "--output-dir", str(self.output_dir),
+        ])
+        self.assertEqual(rc, 0, f"main() が非ゼロ終了: {err}")
+
+        # 両 TSV ファイルが生成されること
+        tsv_n = self.output_dir / "ORDER_TYPE_NORMAL.tsv"
+        tsv_s = self.output_dir / "orderStatus.tsv"
+        self.assertTrue(tsv_n.exists(), "ORDER_TYPE_NORMAL.tsv が生成されない")
+        self.assertTrue(tsv_s.exists(), "orderStatus.tsv が生成されない")
+
+        # ORDER_TYPE_NORMAL.tsv の内容検証
+        with open(tsv_n, encoding="utf-8-sig", newline="") as f:
+            content_n = f.read()
+        self.assertIn("ORDER_TYPE_NORMAL", content_n, "キーワードが TSV に含まれない")
+        self.assertIn(RefType.DIRECT.value,   content_n, "直接参照が TSV に含まれない")
+        self.assertIn(RefType.INDIRECT.value, content_n, "間接参照が TSV に含まれない")
+        self.assertIn(UsageType.CONSTANT.value, content_n, "定数定義が TSV に含まれない")
+
+        # orderStatus.tsv の内容検証
+        with open(tsv_s, encoding="utf-8-sig", newline="") as f:
+            content_s = f.read()
+        self.assertIn("orderStatus", content_s, "キーワードが TSV に含まれない")
+        self.assertIn(RefType.DIRECT.value, content_s, "直接参照が TSV に含まれない")
+
+        # stdout に処理完了メッセージが出力されること
+        self.assertIn("処理完了", out, "処理完了メッセージが stdout に出力されない")
+
+        # stdout に両ファイルの処理件数が出力されること
+        self.assertIn("ORDER_TYPE_NORMAL.grep", out)
+        self.assertIn("orderStatus.grep", out)
 
 
 if __name__ == "__main__":
