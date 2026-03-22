@@ -51,10 +51,12 @@
 - `ProcessStats`（dataclass）: 処理統計（スキップ・フォールバック件数）
 - `RefType`（Enum）: 参照種別（直接/間接/間接（getter経由））
 - `UsageType`（Enum）: 使用タイプ（7種）
+- `ScopeType`（Enum）: 変数の追跡スコープ（project/class/method）
 - `parse_grep_line()`: grep結果1行のパース
 - `process_grep_file()`: grepファイル全行の処理（第1段階）
 - `classify_usage()`: AST + 正規表現フォールバックによる分類
 - `classify_usage_regex()`: 正規表現フォールバック
+- `_track_indirect_for_record()`: 1件の直接参照レコードから間接参照・getter経由参照を追跡（第2・第3段階の統括）
 - `track_constant()`: 定数のプロジェクト全体追跡（第2段階）
 - `track_field()`: フィールドの同一クラス追跡（第2段階）
 - `track_local()`: ローカル変数の同一メソッド追跡（第2段階）

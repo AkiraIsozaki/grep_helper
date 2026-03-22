@@ -61,6 +61,11 @@ class UsageType(Enum):
     ARGUMENT   = "メソッド引数"
     OTHER      = "その他"
 
+class ScopeType(Enum):
+    PROJECT = "project"  # static final 定数 → プロジェクト全体
+    CLASS   = "class"    # インスタンス変数（フィールド） → 同一クラス内 + getter
+    METHOD  = "method"   # ローカル変数 → 同一メソッド内
+
 @dataclass(frozen=True)
 class GrepRecord:
     keyword:    str       # 検索した文言（入力ファイル名から取得）
@@ -204,14 +209,18 @@ def classify_usage_regex(code: str) -> str:
 
 **インターフェース**:
 ```python
-def determine_scope(usage_type: str, code: str) -> str:
+def determine_scope(usage_type: str, code: str,
+                    filepath: str = "", source_dir: Path | None = None,
+                    lineno: int = 0) -> str:
     """変数の種類に応じた追跡スコープを返す。
-    Returns: "project"（定数）/ "class"（フィールド）/ "method"（ローカル変数）
+    Returns: ScopeType の value 文字列（"project" / "class" / "method"）
     詳細なロジックはアルゴリズム設計セクションを参照。
     """
 
-def extract_variable_name(code: str, usage_type: str) -> str | None:
-    """定数/変数の名前をコード行から抽出する。"""
+def extract_variable_name(code: str) -> str | None:
+    """定数/変数の名前をコード行から抽出する。
+    左辺（= より前）の最後の識別子を変数名とみなす。
+    """
 
 def track_constant(var_name: str, source_dir: Path, origin: GrepRecord,
                    ast_cache: dict, stats: ProcessStats) -> list[GrepRecord]:
@@ -245,9 +254,10 @@ def track_local(var_name: str, method_scope: tuple[int, int], origin: GrepRecord
 **インターフェース**:
 ```python
 def find_getter_names(field_name: str, class_file: Path,
-                      ast_cache: dict) -> list[str]:
+                      source_dir: Path) -> list[str]:
     """クラスファイルからgetterメソッド名の候補リストを返す。
     命名規則パターン + return文解析の2方式を併用。
+    ASTの取得は get_ast() 経由（キャッシュ共有）。
     """
 
 def track_getter_calls(getter_name: str, source_dir: Path, origin: GrepRecord,
@@ -412,41 +422,60 @@ def classify_usage_regex(code: str) -> str:
 ### 間接参照追跡スコープ判定アルゴリズム
 
 ```python
-def determine_scope(usage_type: str, code: str) -> str:
-    """変数の種類に応じた追跡スコープを返す。"""
-    if usage_type == "定数定義":
-        return "project"   # static final → プロジェクト全体
+def determine_scope(usage_type: str, code: str,
+                    filepath: str = "", source_dir: Path | None = None,
+                    lineno: int = 0) -> str:
+    """変数の種類に応じた追跡スコープを返す。ScopeType の value 文字列を返す。"""
+    if usage_type == UsageType.CONSTANT.value:
+        return ScopeType.PROJECT.value   # static final → プロジェクト全体
+
+    # javalang AST が利用可能な場合は FieldDeclaration / LocalVariableDeclaration で判定
+    # （パッケージプライベートフィールドも正しく検出できる）
+    if filepath and source_dir and lineno and _JAVALANG_AVAILABLE:
+        tree = get_ast(filepath, source_dir)
+        if tree is not None:
+            for _, node in tree:
+                if not hasattr(node, 'position') or node.position is None:
+                    continue
+                if node.position.line != lineno:
+                    continue
+                if isinstance(node, javalang.tree.FieldDeclaration):
+                    return ScopeType.CLASS.value
+                if isinstance(node, javalang.tree.LocalVariableDeclaration):
+                    return ScopeType.METHOD.value
+
+    # AST が使えない場合は正規表現フォールバック
     stripped = code.strip()
-    # フィールド判定: クラスレベルの宣言（メソッド外）
     if re.match(r'(private|protected|public)?\s+\w[\w<>[\]]*\s+\w+\s*[=;]', stripped):
-        return "class"     # インスタンス変数 → 同一クラス + getter
-    return "method"        # ローカル変数 → 同一メソッド内
+        return ScopeType.CLASS.value     # インスタンス変数 → 同一クラス + getter
+    return ScopeType.METHOD.value        # ローカル変数 → 同一メソッド内
 ```
 
 ### getter候補特定アルゴリズム
 
 ```python
-def find_getter_names(field_name: str, class_file: Path, ast_cache: dict) -> list[str]:
+def find_getter_names(field_name: str, class_file: Path, source_dir: Path) -> list[str]:
     """
     2方式でgetter候補を特定:
     1. 命名規則: field_name="type" → "getType"
     2. return文解析: `return field_name;` しているメソッドを全て検出
-    ast_cache を利用してファイルを再解析しない。
+    ASTの取得は get_ast() 経由（_ast_cache で再解析を省略）。
     """
     candidates = []
     # 方式1: 命名規則（field_name="type" → "getType"）
     getter_by_convention = "get" + field_name[0].upper() + field_name[1:]
     candidates.append(getter_by_convention)
     # 方式2: ASTからreturn文を解析（javalangのAST walk）
-    tree = ast_cache.get(str(class_file))
-    if tree:
-        for _, method_decl in tree.filter(javalang.tree.MethodDeclaration):
-            for _, stmt in method_decl.filter(javalang.tree.ReturnStatement):
-                # `return field_name;` のパターンを検出
-                if (stmt.expression is not None
-                        and hasattr(stmt.expression, 'member')
-                        and stmt.expression.member == field_name):
-                    candidates.append(method_decl.name)
+    if _JAVALANG_AVAILABLE:
+        tree = get_ast(str(class_file), source_dir)
+        if tree is not None:
+            for _, method_decl in tree.filter(javalang.tree.MethodDeclaration):
+                for _, stmt in method_decl.filter(javalang.tree.ReturnStatement):
+                    # `return field_name;` のパターンを検出
+                    if (stmt.expression is not None
+                            and hasattr(stmt.expression, 'member')
+                            and stmt.expression.member == field_name):
+                        candidates.append(method_decl.name)
     return list(set(candidates))
 ```
 

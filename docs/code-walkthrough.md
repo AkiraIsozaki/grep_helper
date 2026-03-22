@@ -353,44 +353,10 @@ def main() -> None:
             all_records: list[GrepRecord] = list(direct_records)
             # list(x) でコピーを作る（direct_records を変更せず、追跡結果を別途追加するため）
 
+            # 第2・第3段階: 間接参照・getter経由参照の追跡
+            # _track_indirect_for_record() に1レコード分の追跡ロジックを委譲
             for record in direct_records:
-                # 定数定義・変数代入のみが間接追跡の起点になる
-                if record.usage_type not in (
-                    UsageType.CONSTANT.value, UsageType.VARIABLE.value
-                ):
-                    continue
-
-                var_name = extract_variable_name(record.code, record.usage_type)
-                if not var_name:
-                    continue
-
-                scope = determine_scope(
-                    record.usage_type, record.code,
-                    record.filepath, source_dir, int(record.lineno),
-                )
-
-                if scope == "project":
-                    all_records.extend(
-                        track_constant(var_name, source_dir, record, stats)
-                    )
-                elif scope == "class":
-                    class_file = _resolve_java_file(record.filepath, source_dir)
-                    if class_file:
-                        all_records.extend(
-                            track_field(var_name, class_file, record, source_dir, stats)
-                        )
-                        for getter_name in find_getter_names(var_name, class_file):
-                            all_records.extend(
-                                track_getter_calls(getter_name, source_dir, record, stats)
-                            )
-                elif scope == "method":
-                    method_scope = _get_method_scope(
-                        record.filepath, source_dir, int(record.lineno)
-                    )
-                    if method_scope:
-                        all_records.extend(
-                            track_local(var_name, method_scope, record, source_dir, stats)
-                        )
+                all_records.extend(_track_indirect_for_record(record, source_dir, stats))
 
             output_path = output_dir / f"{keyword}.tsv"
             write_tsv(all_records, output_path)
@@ -738,7 +704,7 @@ def classify_usage(code, filepath, lineno, source_dir, stats):
 ### extract_variable_name：変数名の抽出
 
 ```python
-def extract_variable_name(code: str, usage_type: str) -> str | None:
+def extract_variable_name(code: str) -> str | None:
     stripped = code.strip().rstrip(';')
     # rstrip(';') でセミコロンを除去（末尾にしかないため rstrip を使う）
 
@@ -803,7 +769,7 @@ def extract_variable_name(code: str, usage_type: str) -> str | None:
 ```python
 def determine_scope(usage_type, code, filepath="", source_dir=None, lineno=0):
     if usage_type == UsageType.CONSTANT.value:
-        return "project"
+        return ScopeType.PROJECT.value   # "project"
 
     if filepath and source_dir and lineno and _JAVALANG_AVAILABLE:
         tree = get_ast(filepath, source_dir)
@@ -815,16 +781,17 @@ def determine_scope(usage_type, code, filepath="", source_dir=None, lineno=0):
                     if node.position.line != lineno:
                         continue
                     if isinstance(node, javalang.tree.FieldDeclaration):
-                        return "class"
+                        return ScopeType.CLASS.value    # "class"
                     if isinstance(node, javalang.tree.LocalVariableDeclaration):
-                        return "method"
+                        return ScopeType.METHOD.value   # "method"
             except Exception:
+                # AST walk失敗時は正規表現フォールバックで継続
                 pass
 
     stripped = code.strip()
     if _FIELD_DECL_PATTERN.match(stripped):
-        return "class"
-    return "method"
+        return ScopeType.CLASS.value    # "class"
+    return ScopeType.METHOD.value       # "method"
 ```
 
 **【具体例】3つのスコープとそれぞれの追跡範囲**
@@ -1019,7 +986,7 @@ i=17: '{' が0個、'}' が1個 → brace_count = 0   found_open=true かつ cou
 ### find_getter_names：getter 候補を収集
 
 ```python
-def find_getter_names(field_name: str, class_file: Path) -> list[str]:
+def find_getter_names(field_name: str, class_file: Path, source_dir: Path) -> list[str]:
     candidates: list[str] = []
 
     # 方式1: 命名規則（field_name="type" → "getType"）
@@ -1030,7 +997,9 @@ def find_getter_names(field_name: str, class_file: Path) -> list[str]:
     candidates.append(getter_by_convention)
 
     # 方式2: AST で `return field_name;` しているメソッドを検索
+    # get_ast() 経由でキャッシュを共有（_ast_cache への直接アクセスは不要）
     if _JAVALANG_AVAILABLE:
+        tree = get_ast(str(class_file), source_dir)
         ...
         for _, method_decl in tree.filter(javalang.tree.MethodDeclaration):
             for _, stmt in method_decl.filter(javalang.tree.ReturnStatement):
@@ -1293,13 +1262,16 @@ for grep_path in *.grep:
  │       判定できなければ classify_usage_regex() で正規表現フォールバック（優先度順）
  │   → 直接参照 GrepRecord のリスト
  │
- ├─ for record（定数定義・変数代入のみが起点）:
+ ├─ for record → _track_indirect_for_record()（第2・第3段階の統括）:
+ │    定数定義・変数代入のみを対象とする
  │    extract_variable_name() → rstrip(';') → split('=')[0] → 最後のトークン
  │    determine_scope()       → AST で FieldDeclaration か LocalVariableDeclaration か判別
+ │                              ScopeType.PROJECT / CLASS / METHOD を返す
  │    ↓
  │    project → track_constant()   全 .java を rglob で走査
  │    class   → track_field()      同一クラスファイルのみ走査
- │              find_getter_names()（命名規則 + return 文 AST解析で getter 名収集）
+ │              find_getter_names(field, class_file, source_dir)
+ │                （命名規則 + return 文 AST解析で getter 名収集、get_ast() 経由）
  │              → track_getter_calls() プロジェクト全体で getter 呼び出しを検索
  │    method  → _get_method_scope()
  │                javalang でメソッド開始行収集 + ブレースカウンタで終了行を特定

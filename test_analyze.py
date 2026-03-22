@@ -20,6 +20,7 @@ from analyze import (
     _get_method_scope,
     _resolve_java_file,
     _search_in_lines,
+    _track_indirect_for_record,
     build_parser,
     classify_usage,
     classify_usage_regex,
@@ -272,21 +273,21 @@ class TestIndirectTracker(unittest.TestCase):
     def test_extract_variable_name_static_final(self):
         """static final 定数名を正しく抽出できること。"""
         code = 'public static final String CODE = "TARGET";'
-        self.assertEqual(extract_variable_name(code, UsageType.CONSTANT.value), "CODE")
+        self.assertEqual(extract_variable_name(code), "CODE")
 
     def test_extract_variable_name_simple_assignment(self):
         """シンプルな変数代入から変数名を抽出できること。"""
         code = 'String msg = CODE;'
-        self.assertEqual(extract_variable_name(code, UsageType.VARIABLE.value), "msg")
+        self.assertEqual(extract_variable_name(code), "msg")
 
     def test_extract_variable_name_private_field(self):
         """private フィールドから変数名を抽出できること。"""
         code = 'private String type;'
-        self.assertEqual(extract_variable_name(code, UsageType.VARIABLE.value), "type")
+        self.assertEqual(extract_variable_name(code), "type")
 
     def test_extract_variable_name_invalid_returns_none(self):
         """変数宣言でない行（条件文など）は None を返すこと。"""
-        result = extract_variable_name('if (x.equals(CODE)) {', UsageType.CONDITION.value)
+        result = extract_variable_name('if (x.equals(CODE)) {')
         self.assertIsNone(result)
 
 
@@ -971,7 +972,7 @@ class TestFindGetterNames(unittest.TestCase):
         entity_file = self.JAVA_DIR / "Entity.java"
         if not entity_file.exists():
             self.skipTest("Entity.java フィクスチャが存在しません。")
-        getters = find_getter_names("type", entity_file)
+        getters = find_getter_names("type", entity_file, self.JAVA_DIR)
         self.assertIn("getType", getters)
 
     def test_ast_based_getter_detection(self):
@@ -982,7 +983,7 @@ class TestFindGetterNames(unittest.TestCase):
         entity_file = self.JAVA_DIR / "Entity.java"
         if not entity_file.exists():
             self.skipTest("Entity.java フィクスチャが存在しません。")
-        getters = find_getter_names("type", entity_file)
+        getters = find_getter_names("type", entity_file, self.JAVA_DIR)
         self.assertIn("getType", getters)
 
     def test_no_duplicates_in_result(self):
@@ -990,12 +991,12 @@ class TestFindGetterNames(unittest.TestCase):
         entity_file = self.JAVA_DIR / "Entity.java"
         if not entity_file.exists():
             self.skipTest("Entity.java フィクスチャが存在しません。")
-        getters = find_getter_names("type", entity_file)
+        getters = find_getter_names("type", entity_file, self.JAVA_DIR)
         self.assertEqual(len(getters), len(set(getters)))
 
     def test_nonexistent_file_returns_convention(self):
         """存在しないファイルでも命名規則のgetter候補は返ること。"""
-        getters = find_getter_names("name", Path("/nonexistent/Foo.java"))
+        getters = find_getter_names("name", Path("/nonexistent/Foo.java"), Path("/nonexistent"))
         self.assertIn("getName", getters)
 
 
@@ -1261,37 +1262,7 @@ class TestIntenseE2E(unittest.TestCase):
         all_records: list[GrepRecord] = list(direct_records)
 
         for record in direct_records:
-            if record.usage_type not in (UsageType.CONSTANT.value, UsageType.VARIABLE.value):
-                continue
-
-            var_name = extract_variable_name(record.code, record.usage_type)
-            if not var_name:
-                continue
-
-            scope = determine_scope(
-                record.usage_type, record.code,
-                record.filepath, self.JAVA_DIR, int(record.lineno),
-            )
-
-            if scope == "project":
-                all_records.extend(
-                    track_constant(var_name, self.JAVA_DIR, record, stats)
-                )
-            elif scope == "class":
-                class_file = _resolve_java_file(record.filepath, self.JAVA_DIR)
-                if class_file:
-                    indirect = track_field(var_name, class_file, record, self.JAVA_DIR, stats)
-                    all_records.extend(indirect)
-                    for getter_name in find_getter_names(var_name, class_file):
-                        all_records.extend(
-                            track_getter_calls(getter_name, self.JAVA_DIR, record, stats)
-                        )
-            elif scope == "method":
-                method_scope = _get_method_scope(record.filepath, self.JAVA_DIR, int(record.lineno))
-                if method_scope:
-                    all_records.extend(
-                        track_local(var_name, method_scope, record, self.JAVA_DIR, stats)
-                    )
+            all_records.extend(_track_indirect_for_record(record, self.JAVA_DIR, stats))
 
         return direct_records, all_records, stats
 
@@ -1424,12 +1395,16 @@ class TestIntenseE2E(unittest.TestCase):
             f"間接参照ファイルが 3 件超を期待するが: {indirect_filepaths}",
         )
 
-        # 間接参照に src_var="ORDER_TYPE_NORMAL" が設定されていること
-        for r in indirect_records:
-            self.assertEqual(r.src_var, "ORDER_TYPE_NORMAL", f"src_var が不正: {r}")
+        # ORDER_TYPE_NORMAL を直接追跡した間接参照レコードが存在すること
+        # （連鎖追跡で normalType 等を追跡したレコードが混在するため、フィルタして確認）
+        from_constant_records = [r for r in indirect_records if r.src_var == "ORDER_TYPE_NORMAL"]
+        self.assertGreater(
+            len(from_constant_records), 0,
+            "ORDER_TYPE_NORMAL を追跡した間接参照レコードが見つからない",
+        )
 
-        # 間接参照の src_file がすべて AppConstants.java であること
-        for r in indirect_records:
+        # ORDER_TYPE_NORMAL 追跡レコードの src_file がすべて AppConstants.java であること
+        for r in from_constant_records:
             self.assertIn("AppConstants.java", r.src_file, f"src_file が不正: {r}")
 
     # ------------------------------------------------------------------
@@ -1461,9 +1436,17 @@ class TestIntenseE2E(unittest.TestCase):
         order_java_refs = [fp for fp in indirect_fps if "Order.java" in fp]
         self.assertGreater(len(order_java_refs), 0, "Order.java への間接参照が見つからない")
 
-        # src_var="orderStatus" が設定されていること
-        for r in indirect_records:
-            self.assertEqual("orderStatus", r.src_var, f"src_var が不正: {r}")
+        # orderStatus フィールドを直接追跡した間接参照レコードが存在すること
+        # （連鎖追跡で status/currentStatus 等を追跡したレコードが混在するため、フィルタして確認）
+        from_field_records = [r for r in indirect_records if r.src_var == "orderStatus"]
+        self.assertGreater(
+            len(from_field_records), 0,
+            "orderStatus フィールドを追跡した間接参照レコードが見つからない",
+        )
+
+        # Order.java への間接参照が from_field_records に含まれること
+        order_java_refs = [r.filepath for r in from_field_records if "Order.java" in r.filepath]
+        self.assertGreater(len(order_java_refs), 0, "Order.java への間接参照が見つからない")
 
     # ------------------------------------------------------------------
     # テスト5: getter 経由参照の検出
@@ -1480,12 +1463,14 @@ class TestIntenseE2E(unittest.TestCase):
         getter_records = [r for r in all_records if r.ref_type == RefType.GETTER.value]
         self.assertGreater(len(getter_records), 0, "getter 経由参照レコードが見つからない")
 
-        # getter 名が getOrderStatus であること（命名規則由来）
-        for r in getter_records:
-            self.assertIn(
-                "getOrderStatus", r.src_var,
-                f"getter 名が期待と異なる: {r.src_var}",
-            )
+        # 命名規則由来の getOrderStatus が getter 候補に含まれること
+        # （AST解析で fetchStatus/retrieveCurrentStatus 等の非標準getterも検出されるため、
+        #   「全レコード = getOrderStatus」ではなく「少なくとも1件が getOrderStatus」で確認）
+        getter_names = {r.src_var for r in getter_records}
+        self.assertIn(
+            "getOrderStatus", getter_names,
+            f"getOrderStatus が getter 候補に含まれない: {getter_names}",
+        )
 
         # ValidationService.java で呼び出しが検出されること
         getter_fps = [r.filepath for r in getter_records]
