@@ -10,3 +10,6 @@ dist/
 output/*.tsv
 htmlcov/
 .coverage
+.idea/
+.ai/
+.claude/settings.local.json
