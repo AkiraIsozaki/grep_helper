@@ -300,7 +300,7 @@ sequenceDiagram
                 CLI->>GT: find_getter_names(var_name, class_file)
                 GT->>GT: 命名規則: "get" + var_name先頭大文字化
                 GT->>AST: get_ast(class_file)
-                GT->>GT: ReturnStatement で return var_name; を探す
+                GT->>GT: ReturnStatement で return var_name を探す
                 GT-->>CLI: getter_names: list[str]
                 
                 loop 各 getter_name
@@ -428,7 +428,7 @@ graph TD
     TYPE --> METHOD2["MethodDeclaration<br/>─────────────────<br/>name: 'getSampleCode'<br/>modifiers: {'public','static'}<br/>return_type: String<br/>position: line=20"]
 
     FIELD --> VARDECL["VariableDeclarator<br/>─────────────────<br/>name: 'SAMPLE_CODE'"]
-    VARDECL --> LIT1["Literal<br/>─────<br/>value: '\"SAMPLE\"'"]
+    VARDECL --> LIT1["Literal<br/>─────<br/>value: 'SAMPLE'"]
 
     METHOD1 --> PARAM["FormalParameter<br/>─────────────────<br/>type: String<br/>name: 'value'"]
     METHOD1 --> IF["IfStatement<br/>─────────────────<br/>position: line=13"]
@@ -466,7 +466,7 @@ graph TD
     CLS2 --> MTH2["MethodDeclaration<br/>─────────────────<br/>name: 'getType'<br/>modifiers: {'public'}<br/>return_type: String<br/>position: line=10"]
 
     FLD2 --> VD2["VariableDeclarator<br/>name: 'type'"]
-    VD2 --> LT2["Literal<br/>value: '\"SAMPLE\"'"]
+    VD2 --> LT2["Literal<br/>value: 'SAMPLE'"]
 
     MTH2 --> RT2["ReturnStatement<br/>position: line=11"]
     RT2 --> MR2["MemberReference<br/>member: 'type'"]
@@ -1196,8 +1196,8 @@ flowchart TD
     ERR5["grep ファイルの不正行\n（形式違反・空行・バイナリ通知）"]
 
     ERR1 -->|_JAVALANG_AVAILABLE = False| FB1["全ファイルで正規表現フォールバック"]
-    ERR2 -->|_ast_cache[key] = None| FB2["正規表現フォールバック\n（fallback_files には追加しない）"]
-    ERR3 -->|_ast_cache[key] = None| FB3["正規表現フォールバック\nfallback_files に記録"]
+    ERR2 -->|cache = None 登録| FB2["正規表現フォールバック\n（fallback_files には追加しない）"]
+    ERR3 -->|cache = None 登録| FB3["正規表現フォールバック\nfallback_files に記録"]
     ERR4 -->|errors='replace'| FB4["化け字で継続\n（critical でないため処理続行）"]
     ERR5 -->|parse_grep_line → None| FB5["その行をスキップ\nskipped_lines をインクリメント"]
 
