@@ -64,7 +64,8 @@
       "Bash(python -m flake8 analyze.py 2>&1; echo \"exit:$?\")",
       "Bash(.venv/bin/python -m py_compile analyze.py && echo \"構文OK\")",
       "Bash(.venv/bin/python -m py_compile analyze.py && echo \"py_compile: OK\" 2>&1)",
-      "Bash(bash -n /workspaces/grep_helper/run.sh && echo \"run.sh: syntax OK\" 2>&1\nbash -n /workspaces/grep_helper/setup.sh && echo \"setup.sh: syntax OK\" 2>&1)"
+      "Bash(bash -n /workspaces/grep_helper/run.sh && echo \"run.sh: syntax OK\" 2>&1\nbash -n /workspaces/grep_helper/setup.sh && echo \"setup.sh: syntax OK\" 2>&1)",
+      "Bash(cat /workspaces/grep_helper/tests/fixtures/java/*.java)"
     ]
   }
 }

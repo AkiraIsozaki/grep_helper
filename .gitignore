@@ -10,3 +10,5 @@ dist/
 output/*.tsv
 htmlcov/
 .coverage
+.ai/
+.idea/
