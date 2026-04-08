@@ -43,12 +43,13 @@ download-wheels:
 	@echo "wheelhouse/ ディレクトリごとSolaris環境に持ち込んでください。"
 
 # Python 3.7 ソースtarballをダウンロード（インターネット接続環境で実行）
+# GitHub経由で取得（python.orgが遮断されている環境向け）
 download-python-src:
 	mkdir -p python-src
 	curl -L -o python-src/Python-3.7.17.tgz \
-		https://www.python.org/ftp/python/3.7.17/Python-3.7.17.tgz || \
+		https://github.com/python/cpython/archive/refs/tags/v3.7.17.tar.gz || \
 	wget -O python-src/Python-3.7.17.tgz \
-		https://www.python.org/ftp/python/3.7.17/Python-3.7.17.tgz
+		https://github.com/python/cpython/archive/refs/tags/v3.7.17.tar.gz
 	@echo "Python 3.7.17 ソースを python-src/ にダウンロードしました。"
 
 # Solaris向け配布zip生成（wheelhouse + Python ソース含む）

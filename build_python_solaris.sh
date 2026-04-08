@@ -20,6 +20,8 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 PYTHON_VERSION="3.7.17"
 PYTHON_ARCHIVE="$SCRIPT_DIR/python-src/Python-${PYTHON_VERSION}.tgz"
+# GitHub アーカイブは cpython-X.Y.Z/ として展開される
+PYTHON_SRC_DIR="cpython-${PYTHON_VERSION}"
 PYTHON_PREFIX="${PYTHON_PREFIX:-/opt/python37}"
 BUILD_DIR="$SCRIPT_DIR/python-build"
 
@@ -79,7 +81,7 @@ rm -rf "$BUILD_DIR"
 mkdir -p "$BUILD_DIR"
 echo "ソースを展開しています..."
 tar xzf "$PYTHON_ARCHIVE" -C "$BUILD_DIR"
-cd "$BUILD_DIR/Python-${PYTHON_VERSION}"
+cd "$BUILD_DIR/${PYTHON_SRC_DIR}"
 
 # ----------------------------------------------------------------
 # 5. configure
