@@ -33,21 +33,18 @@ Linux / Mac の開発環境で実行してください。生成された `wheelh
 
 ## Solaris 10 SPARC での使い方
 
+wheel ファイルはリポジトリに含まれているため、追加作業は不要です。
+
 ```sh
-# 1. Linux/Mac で wheel を取得
-make download-wheels
+# 1. Linux/Mac でリポジトリを clone してそのまま Solaris に転送
 
-# 2. ツール一式（wheelhouse/ 含む）を Solaris 10 へ転送
+# 2. Python 3.7 をビルド（Sun Studio cc）
+PYTHON_PREFIX=/opt/python37 sh build_python_solaris.sh
 
-# 3. Solaris 10 で Python 3.7 以上を準備（別途持ち込み）
+# 3. grep_helper をセットアップ
+PYTHON_CMD=/opt/python37/bin/python3 sh setup_solaris.sh
 
-# 4. セットアップ
-sh setup_solaris.sh
-
-# Python のパスを明示する場合
-PYTHON_CMD=/opt/python37/bin/python3.7 sh setup_solaris.sh
-
-# 5. 実行
+# 4. 実行
 sh run_solaris.sh --source-dir /path/to/javaproject
 ```
 

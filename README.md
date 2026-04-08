@@ -119,17 +119,17 @@ input/ERROR_CODE.grep  →  output/ERROR_CODE.tsv
 
 ---
 
-### 手順1: インターネット接続環境（Linux/Mac）で持ち込み一式を準備
+### 手順1: インターネット接続環境（Linux/Mac）でリポジトリを取得
 
 ```sh
-make package-solaris
+git clone <repository-url> grep_helper
 ```
 
-`dist/grep_analyzer_solaris.zip` が生成されます。中身：
+リポジトリには以下が**すべて含まれています**（追加作業不要）：
 
-| 内容 | 説明 |
-|------|------|
-| `python-src/Python-3.7.17.tgz` | Python 3.7.17 ソース |
+| ファイル | 説明 |
+|---------|------|
+| `python-src/Python-3.7.17.tgz` | Python 3.7.17 ソース（GitHub アーカイブ） |
 | `build_python_solaris.sh` | Python ビルドスクリプト（`cc` 対応） |
 | `wheelhouse/*.whl` | javalang / six（純粋 Python wheel） |
 | `setup_solaris.sh` | grep_helper セットアップスクリプト |
@@ -137,11 +137,9 @@ make package-solaris
 
 ---
 
-### 手順2: Solaris 10 に転送・展開
+### 手順2: Solaris 10 に転送
 
-```sh
-unzip grep_analyzer_solaris.zip
-```
+`grep_helper/` ディレクトリごと Solaris 10 に転送します（scp / USB メモリ など）。
 
 ---
 
@@ -158,6 +156,7 @@ PYTHON_PREFIX=/home/yourname/python37 sh build_python_solaris.sh
 ```
 
 > **ビルド時間**: SPARC の性能によりますが、数十分かかる場合があります。  
+> **C コンパイラ**: Sun Studio `cc` を使用します（gcc 3.4.3 は古すぎるため非推奨）。  
 > **GNU make**: `/usr/sfw/bin/gmake` が必要です（Solaris 10 SFW パッケージ `SUNWgmake`）。  
 > **Sun Studio `cc`**: PATH に含まれている必要があります（例: `/opt/SUNWspro/bin`）。
 
