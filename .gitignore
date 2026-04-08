@@ -12,3 +12,5 @@ htmlcov/
 .coverage
 .ai/
 .idea/
+python-src/
+python-build/

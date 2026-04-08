@@ -107,25 +107,35 @@ input/ERROR_CODE.grep  →  output/ERROR_CODE.tsv
 
 ### 前提条件
 
-- Solaris 10 1/13 SPARC
-- Python 3.7 以上（ホスト OS に含まれないため別途持ち込む）
-- `wheelhouse/` ディレクトリに `.whl` ファイルが存在すること
+| 項目 | 内容 |
+|------|------|
+| OS | Solaris 10 1/13 SPARC |
+| C コンパイラ | Sun Studio `cc`（gcc 不要） |
+| GNU make | `/usr/sfw/bin/gmake` など（SFW パッケージ） |
+| ネットワーク | オフライン（持ち込み一式で完結） |
 
 > **Python 2.6.4 について**: Solaris 10 標準の Python 2.6.4 は使用できません。
-> Python 3.7 以上を別途用意して `PYTHON_CMD` で指定してください。
+> 以下の手順で Python 3.7 をソースからビルドします。
 
-### 手順1: インターネット接続環境（Linux/Mac）で wheel を取得
+---
 
-```sh
-make download-wheels
-```
-
-Solaris 向けパッケージ一式（zip）を生成する場合:
+### 手順1: インターネット接続環境（Linux/Mac）で持ち込み一式を準備
 
 ```sh
 make package-solaris
-# → dist/grep_analyzer_solaris.zip が生成されます（wheelhouse/ 含む）
 ```
+
+`dist/grep_analyzer_solaris.zip` が生成されます。中身：
+
+| 内容 | 説明 |
+|------|------|
+| `python-src/Python-3.7.17.tgz` | Python 3.7.17 ソース |
+| `build_python_solaris.sh` | Python ビルドスクリプト（`cc` 対応） |
+| `wheelhouse/*.whl` | javalang / six（純粋 Python wheel） |
+| `setup_solaris.sh` | grep_helper セットアップスクリプト |
+| `run_solaris.sh` | 実行スクリプト |
+
+---
 
 ### 手順2: Solaris 10 に転送・展開
 
@@ -133,19 +143,35 @@ make package-solaris
 unzip grep_analyzer_solaris.zip
 ```
 
-### 手順3: セットアップ実行
+---
+
+### 手順3: Python 3.7 をビルド（初回のみ）
 
 ```sh
-sh setup_solaris.sh
+sh build_python_solaris.sh
 ```
 
-Python 3 のパスを明示する場合（Python を別ディレクトリに持ち込んだ場合など）:
+インストール先を変更する場合（デフォルト: `/opt/python37`）:
 
 ```sh
-PYTHON_CMD=/opt/python37/bin/python3.7 sh setup_solaris.sh
+PYTHON_PREFIX=/home/yourname/python37 sh build_python_solaris.sh
 ```
 
-### 手順4: 実行
+> **ビルド時間**: SPARC の性能によりますが、数十分かかる場合があります。  
+> **GNU make**: `/usr/sfw/bin/gmake` が必要です（Solaris 10 SFW パッケージ `SUNWgmake`）。  
+> **Sun Studio `cc`**: PATH に含まれている必要があります（例: `/opt/SUNWspro/bin`）。
+
+---
+
+### 手順4: grep_helper のセットアップ
+
+```sh
+PYTHON_CMD=/opt/python37/bin/python3 sh setup_solaris.sh
+```
+
+---
+
+### 手順5: 実行
 
 ```sh
 sh run_solaris.sh --source-dir /path/to/javaproject
