@@ -149,11 +149,7 @@ git clone <repository-url> grep_helper
 sh build_python_solaris.sh
 ```
 
-インストール先を変更する場合（デフォルト: `/opt/python37`）:
-
-```sh
-PYTHON_PREFIX=/home/yourname/python37 sh build_python_solaris.sh
-```
+Python 3.7 はツールディレクトリ内の `python37/` にインストールされます（root 不要）。
 
 > **ビルド時間**: SPARC の性能によりますが、数十分かかる場合があります。  
 > **C コンパイラ**: Sun Studio `cc` を使用します（gcc 3.4.3 は古すぎるため非推奨）。  
@@ -165,8 +161,10 @@ PYTHON_PREFIX=/home/yourname/python37 sh build_python_solaris.sh
 ### 手順4: grep_helper のセットアップ
 
 ```sh
-PYTHON_CMD=/opt/python37/bin/python3 sh setup_solaris.sh
+sh setup_solaris.sh
 ```
+
+`python37/` が存在すれば自動的に検出されます。
 
 ---
 

@@ -22,7 +22,8 @@ PYTHON_VERSION="3.7.17"
 PYTHON_ARCHIVE="$SCRIPT_DIR/python-src/Python-${PYTHON_VERSION}.tgz"
 # GitHub アーカイブは cpython-X.Y.Z/ として展開される
 PYTHON_SRC_DIR="cpython-${PYTHON_VERSION}"
-PYTHON_PREFIX="${PYTHON_PREFIX:-/opt/python37}"
+# ツールディレクトリ内にインストール（root不要・共有サーバ対応）
+PYTHON_PREFIX="${PYTHON_PREFIX:-$SCRIPT_DIR/python37}"
 BUILD_DIR="$SCRIPT_DIR/python-build"
 
 echo "Python ${PYTHON_VERSION} ビルドを開始します（Solaris 10 SPARC / cc）..."
@@ -119,4 +120,4 @@ echo "インストール先: $PYTHON_PREFIX"
 echo "================================================================"
 echo ""
 echo "次のステップ（grep_helper のセットアップ）:"
-echo "  PYTHON_CMD=$PYTHON_PREFIX/bin/python3 sh $SCRIPT_DIR/setup_solaris.sh"
+echo "  sh $SCRIPT_DIR/setup_solaris.sh"

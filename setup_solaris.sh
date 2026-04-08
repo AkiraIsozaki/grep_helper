@@ -55,7 +55,11 @@ if [ -n "${PYTHON_CMD:-}" ]; then
     fi
 else
     PYTHON_CMD=""
-    for cmd in python3.7 python3.8 python3.9 python3.10 python3.11 python3 python; do
+    # ツールディレクトリ内の python37/ を最優先で確認（build_python_solaris.sh のデフォルト）
+    for cmd in \
+        "$SCRIPT_DIR/python37/bin/python3" \
+        "$SCRIPT_DIR/python37/bin/python" \
+        python3.7 python3.8 python3.9 python3.10 python3.11 python3 python; do
         if "$cmd" -c "import sys; assert sys.version_info >= (3, 7)" 2>/dev/null; then
             PYTHON_CMD="$cmd"
             break

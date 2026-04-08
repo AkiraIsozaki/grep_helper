@@ -13,3 +13,4 @@ htmlcov/
 .ai/
 .idea/
 python-build/
+python37/
