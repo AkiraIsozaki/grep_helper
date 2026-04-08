@@ -19,7 +19,7 @@ package:
 		setup.bat \
 		run.sh \
 		run.bat \
-		README.txt \
+		README.md \
 		input/.gitkeep \
 		output/.gitkeep
 	@echo "生成完了: dist/grep_analyzer.zip"
@@ -50,7 +50,7 @@ package-solaris: download-wheels
 		requirements.txt \
 		setup_solaris.sh \
 		run_solaris.sh \
-		README.txt \
+		README.md \
 		wheelhouse/ \
 		input/.gitkeep \
 		output/.gitkeep
