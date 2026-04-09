@@ -275,7 +275,7 @@ if filepath not in _ast_cache:
     source = read_java_file(filepath)
     try:
         _ast_cache[filepath] = javalang.parse.parse(source)
-    except javalang.parser.JavaSyntaxError:
+    except Exception:
         _ast_cache[filepath] = None  # フォールバック対象としてマーク
 ```
 
@@ -361,7 +361,7 @@ TSV出力をExcelで文字化けなく開けるよう、UTF-8 BOM付き（`utf-8
 
 ### GrepRecord
 
-**定義**: 分析結果の1件を表すイミュータブルなデータモデル（`@dataclass(frozen=True)`）
+**定義**: 分析結果の1件を表すイミュータブルなデータモデル（`NamedTuple`）
 
 **説明**:
 パイプラインの各段階間で受け渡されるデータ構造。直接参照・間接参照・getter経由参照のすべてを統一的に表現する。

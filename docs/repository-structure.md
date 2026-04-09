@@ -47,7 +47,7 @@
 **役割**: ツールの全ロジックを1ファイルに集約したエントリーポイント
 
 **配置クラス・関数**:
-- `GrepRecord`（dataclass）: 分析結果の1件を表すデータモデル
+- `GrepRecord`（NamedTuple）: 分析結果の1件を表すデータモデル
 - `ProcessStats`（dataclass）: 処理統計（スキップ・フォールバック件数）
 - `RefType`（Enum）: 参照種別（直接/間接/間接（getter経由））
 - `UsageType`（Enum）: 使用タイプ（7種）

@@ -61,8 +61,7 @@ class UsageType(Enum):
     ARGUMENT   = "メソッド引数"
     OTHER      = "その他"
 
-@dataclass(frozen=True)
-class GrepRecord:
+class GrepRecord(NamedTuple):
     keyword:    str       # 検索した文言（入力ファイル名から取得）
     ref_type:   str       # 参照種別（RefType.value）
     usage_type: str       # 使用タイプ（UsageType.value）
@@ -75,7 +74,7 @@ class GrepRecord:
 ```
 
 **制約**:
-- `frozen=True` でイミュータブルに保つ
+- `NamedTuple` でイミュータブルに保つ
 - 直接参照の場合 `src_var` / `src_file` / `src_lineno` は空文字列
 - `ref_type` の取りうる値: `直接` / `間接` / `間接（getter経由）`
 - `usage_type` の取りうる値: 7種のいずれか（分類不能時は `その他`）
@@ -85,12 +84,12 @@ class GrepRecord:
 ```python
 @dataclass
 class ProcessStats:
-    total_lines:    int = 0   # grep結果ファイルから読み込んだ総行数（コメント行含む）
-    valid_lines:    int = 0   # パース成功行数。total_lines = valid_lines + skipped_lines が常に成立
-                              # ※ 間接参照・getter経由で追加されたレコードはカウント対象外
-    skipped_lines:  int = 0   # スキップ行数（バイナリ通知・空行・不正形式）
-    fallback_files: list[str] = field(default_factory=list)  # ASTフォールバックしたファイル
-    encoding_errors: list[str] = field(default_factory=list) # エンコーディングエラーのファイル
+    total_lines:     int = 0   # grep結果ファイルから読み込んだ総行数（コメント行含む）
+    valid_lines:     int = 0   # パース成功行数。total_lines = valid_lines + skipped_lines が常に成立
+                               # ※ 間接参照・getter経由で追加されたレコードはカウント対象外
+    skipped_lines:   int = 0   # スキップ行数（バイナリ通知・空行・不正形式）
+    fallback_files:  set[str] = field(default_factory=set)   # ASTフォールバックしたファイル（O(1) membership）
+    encoding_errors: set[str] = field(default_factory=set)   # エンコーディングエラーのファイル（O(1) membership）
 ```
 
 ### ER図
@@ -134,9 +133,9 @@ def parse_grep_line(line: str) -> dict | None:
     Windowsパス対応: re.split(r':(\d+):', line, maxsplit=1) を使用
     """
 
-def process_grep_file(path: Path, keyword: str, stats: ProcessStats) -> list[GrepRecord]:
+def process_grep_file(path: Path, keyword: str, source_dir: Path, stats: ProcessStats) -> list[GrepRecord]:
     """grepファイル全行を処理し、第1段階（直接参照）レコードのリストを返す。
-    grep結果ファイル読み込み: encoding='utf-8', errors='replace'
+    grep結果ファイル読み込み: encoding='cp932', errors='replace'
     Javaソースファイル読み込み: encoding='shift_jis', errors='replace'
     """
 ```
@@ -155,10 +154,10 @@ def process_grep_file(path: Path, keyword: str, stats: ProcessStats) -> list[Gre
 **インターフェース**:
 ```python
 def classify_usage(code: str, filepath: str, lineno: int,
-                   source_dir: Path, ast_cache: dict,
+                   source_dir: Path,
                    stats: ProcessStats) -> str:
     """コード行を解析し、使用タイプ文字列を返す。
-    1. javalangでAST解析を試みる（ast_cacheを利用）
+    1. javalangでAST解析を試みる（モジュールレベルのASTキャッシュを利用）
     2. パースエラーの場合は正規表現フォールバック
     """
 
@@ -204,8 +203,11 @@ def classify_usage_regex(code: str) -> str:
 
 **インターフェース**:
 ```python
-def determine_scope(usage_type: str, code: str) -> str:
+def determine_scope(usage_type: str, code: str, filepath: str = "",
+                    source_dir: Path | None = None, lineno: int = 0) -> str:
     """変数の種類に応じた追跡スコープを返す。
+    javalangが利用可能な場合はASTで判定（パッケージプライベートフィールドも正確に判定）。
+    AST不可の場合は正規表現フォールバック。
     Returns: "project"（定数）/ "class"（フィールド）/ "method"（ローカル変数）
     詳細なロジックはアルゴリズム設計セクションを参照。
     """
@@ -214,15 +216,15 @@ def extract_variable_name(code: str, usage_type: str) -> str | None:
     """定数/変数の名前をコード行から抽出する。"""
 
 def track_constant(var_name: str, source_dir: Path, origin: GrepRecord,
-                   ast_cache: dict, stats: ProcessStats) -> list[GrepRecord]:
+                   stats: ProcessStats) -> list[GrepRecord]:
     """static finalの定数をプロジェクト全体で追跡する。"""
 
 def track_field(var_name: str, class_file: Path, origin: GrepRecord,
-                ast_cache: dict, stats: ProcessStats) -> list[GrepRecord]:
+                source_dir: Path, stats: ProcessStats) -> list[GrepRecord]:
     """フィールドを同一クラス内で追跡する。"""
 
 def track_local(var_name: str, method_scope: tuple[int, int], origin: GrepRecord,
-                ast_cache: dict, stats: ProcessStats) -> list[GrepRecord]:
+                source_dir: Path, stats: ProcessStats) -> list[GrepRecord]:
     """ローカル変数を同一メソッド内で追跡する。
     method_scope: (開始行番号, 終了行番号) のタプルでメソッドの行範囲を指定する。
     """
@@ -244,14 +246,14 @@ def track_local(var_name: str, method_scope: tuple[int, int], origin: GrepRecord
 
 **インターフェース**:
 ```python
-def find_getter_names(field_name: str, class_file: Path,
-                      ast_cache: dict) -> list[str]:
+def find_getter_names(field_name: str, class_file: Path) -> list[str]:
     """クラスファイルからgetterメソッド名の候補リストを返す。
     命名規則パターン + return文解析の2方式を併用。
+    モジュールレベルの _ast_cache を利用してファイルを再解析しない。
     """
 
 def track_getter_calls(getter_name: str, source_dir: Path, origin: GrepRecord,
-                       ast_cache: dict, stats: ProcessStats) -> list[GrepRecord]:
+                       stats: ProcessStats) -> list[GrepRecord]:
     """プロジェクト全体でgetter呼び出し箇所を検索・AST分類する。
     false positiveは許容（もれなく優先）。
     参照種別 = 間接（getter経由） として出力。
@@ -329,6 +331,14 @@ def print_report(stats: ProcessStats, processed_files: list[str]) -> None:
 # 並列処理を導入する場合はスレッドロックが必要。
 _ast_cache: dict[str, object | None] = {}
 # None = パースエラーが発生したファイル（フォールバック対象）
+
+# ASTインデックスキャッシュ: filepath → {lineno: (usage_type | None, scope | None)}
+# usage_type: UsageType.value, scope: "class" | "method" | None
+_ast_line_index: dict[str, dict[int, tuple[str | None, str | None]]] = {}
+
+# キャッシュ上限（大規模プロジェクトでのOOM防止）
+_MAX_AST_CACHE_SIZE = 300   # ASTオブジェクトは大きいため厳しめ
+_MAX_FILE_CACHE_SIZE = 800  # ファイル行キャッシュの最大エントリ数
 ```
 
 ## ユースケース図
@@ -426,19 +436,26 @@ def determine_scope(usage_type: str, code: str) -> str:
 ### getter候補特定アルゴリズム
 
 ```python
-def find_getter_names(field_name: str, class_file: Path, ast_cache: dict) -> list[str]:
+def find_getter_names(field_name: str, class_file: Path) -> list[str]:
     """
     2方式でgetter候補を特定:
     1. 命名規則: field_name="type" → "getType"
     2. return文解析: `return field_name;` しているメソッドを全て検出
-    ast_cache を利用してファイルを再解析しない。
+    モジュールレベルの _ast_cache を利用してファイルを再解析しない。
     """
     candidates = []
     # 方式1: 命名規則（field_name="type" → "getType"）
     getter_by_convention = "get" + field_name[0].upper() + field_name[1:]
     candidates.append(getter_by_convention)
     # 方式2: ASTからreturn文を解析（javalangのAST walk）
-    tree = ast_cache.get(str(class_file))
+    cache_key = str(class_file)
+    if cache_key not in _ast_cache:
+        try:
+            source = class_file.read_text(encoding="shift_jis", errors="replace")
+            _ast_cache[cache_key] = javalang.parse.parse(source)
+        except Exception:
+            _ast_cache[cache_key] = None
+    tree = _ast_cache[cache_key]
     if tree:
         for _, method_decl in tree.filter(javalang.tree.MethodDeclaration):
             for _, stmt in method_decl.filter(javalang.tree.ReturnStatement):
@@ -522,8 +539,8 @@ TARGET	直接	条件判定	Validator.java	80	if (x.equals("TARGET")) {
 | `--input-dir` 不在/非ディレクトリ | exit code 1 | `エラー: --input-dir で指定したディレクトリが存在しません: [パス]` (stderr) |
 | `input/` が空/不在 | exit code 1 | `エラー: input/ディレクトリにgrep結果ファイルがありません` (stderr) |
 | バイナリ通知行 | スキップ・`stats.skipped_lines++` | 処理完了後サマリに件数記録 |
-| ASTパースエラー | 正規表現フォールバック・`stats.fallback_files.append(...)` | 処理完了後サマリに記録 |
-| エンコーディングエラー | `errors='replace'` で継続・`stats.encoding_errors.append(...)` | 処理完了後サマリに記録 |
+| ASTパースエラー | 正規表現フォールバック・`stats.fallback_files.add(...)` | 処理完了後サマリに記録 |
+| エンコーディングエラー | `errors='replace'` で継続・`stats.encoding_errors.add(...)` | 処理完了後サマリに記録 |
 | `output/` 不在 | `output_dir.mkdir(parents=True, exist_ok=True)` で自動作成 | なし |
 | 予期しない例外 | exit code 2 | `予期しないエラー: [詳細]` (stderr) |
 

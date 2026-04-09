@@ -33,8 +33,7 @@ def classify(c): ...
 from dataclasses import dataclass
 from enum import Enum
 
-@dataclass(frozen=True)
-class GrepRecord: ...
+class GrepRecord(NamedTuple): ...
 
 class UsageType(Enum):
     CONSTANT  = "定数定義"
@@ -84,7 +83,7 @@ def parse_grep_line(line):
 **関数・クラスのdocstring**:
 ```python
 def classify_usage(code: str, filepath: str, lineno: int,
-                   source_dir: Path, ast_cache: dict,
+                   source_dir: Path,
                    stats: ProcessStats) -> str:
     """コード行を解析し、使用タイプ文字列を返す。
 
@@ -96,7 +95,6 @@ def classify_usage(code: str, filepath: str, lineno: int,
         filepath: Javaファイルのパス（AST解析用）
         lineno: 対象行の行番号（AST解析用）
         source_dir: Javaソースのルートディレクトリ
-        ast_cache: ASTキャッシュ（同一ファイルの再解析防止）
         stats: 処理統計（フォールバック件数の記録用）
 
     Returns:
@@ -113,7 +111,7 @@ parts = re.split(r':(\d+):', line.rstrip(), maxsplit=1)
 # 良い例: 複雑なロジックを説明
 # false positiveは許容（「もれなく」が最優先のため全件出力）
 # 他クラスの同名getterが混入する可能性があるが仕様上許容
-records.extend(track_getter_calls(getter_name, source_dir, origin, ast_cache, stats))
+records.extend(track_getter_calls(getter_name, source_dir, origin, stats))
 
 # 悪い例: コードを繰り返すだけ
 # listをsortする
@@ -133,9 +131,9 @@ records.sort(key=lambda r: (r.keyword, r.filepath, r.lineno))
 try:
     tree = javalang.parse.parse(source)
     _ast_cache[filepath] = tree
-except javalang.parser.JavaSyntaxError:
+except Exception:
     _ast_cache[filepath] = None
-    stats.fallback_files.append(f"{filepath}:{lineno}")
+    stats.fallback_files.add(filepath)  # setなので重複は自動的に無視
     # フォールバックを使用して処理継続
 
 # 良い例: 入力エラーはstderrへ日本語で出力
@@ -164,7 +162,7 @@ def get_ast(filepath: str, source_dir: Path) -> object | None:
         try:
             source = full_path.read_text(encoding="shift_jis", errors="replace")
             _ast_cache[filepath] = javalang.parse.parse(source)
-        except javalang.parser.JavaSyntaxError:
+        except Exception:
             _ast_cache[filepath] = None
     return _ast_cache[filepath]
 

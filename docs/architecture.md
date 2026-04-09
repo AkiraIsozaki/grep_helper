@@ -182,7 +182,7 @@
 - **必要ディスク容量**: 入力の10倍程度
 - **外部依存**: `javalang` のみ（`pip install javalang` または `setup.sh` で自動インストール）
 - **入力文字コード（Javaソースファイル）**: Shift-JIS 固定（`encoding='shift_jis', errors='replace'` で読み込む）
-- **入力文字コード（grep結果ファイル）**: UTF-8（`encoding='utf-8', errors='replace'`）
+- **入力文字コード（grep結果ファイル）**: CP932（`encoding='cp932', errors='replace'`）
 - **出力文字コード（TSV）**: UTF-8 BOM付き（`encoding='utf-8-sig'`）— Excelで文字化けなく開くため
 
 ### パフォーマンス制約
