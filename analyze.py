@@ -697,8 +697,12 @@ def track_constant(
     records: list[GrepRecord] = []
 
     for java_file in _get_java_files(source_dir):
-        filepath_str = str(java_file)
-        lines = _cached_read_lines(filepath_str, stats)
+        filepath_abs = str(java_file)
+        try:
+            filepath_str = str(java_file.relative_to(source_dir))
+        except ValueError:
+            filepath_str = filepath_abs
+        lines = _cached_read_lines(filepath_abs, stats)
         if not lines:
             continue
 
@@ -739,6 +743,11 @@ def track_field(
     if not lines:
         return []
 
+    try:
+        filepath_for_record = str(class_file.relative_to(source_dir))
+    except ValueError:
+        filepath_for_record = str(class_file)
+
     return _search_in_lines(
         lines=lines,
         var_name=var_name,
@@ -747,7 +756,7 @@ def track_field(
         source_dir=source_dir,
         ref_type=RefType.INDIRECT.value,
         stats=stats,
-        filepath_for_record=str(class_file),
+        filepath_for_record=filepath_for_record,
     )
 
 
@@ -874,8 +883,12 @@ def track_getter_calls(
     records: list[GrepRecord] = []
 
     for java_file in _get_java_files(source_dir):
-        filepath_str = str(java_file)
-        lines = _cached_read_lines(filepath_str, stats)
+        filepath_abs = str(java_file)
+        try:
+            filepath_str = str(java_file.relative_to(source_dir))
+        except ValueError:
+            filepath_str = filepath_abs
+        lines = _cached_read_lines(filepath_abs, stats)
         if not lines:
             continue
 
@@ -929,8 +942,12 @@ def _batch_track_constants(
     records: list[GrepRecord] = []
 
     for java_file in _get_java_files(source_dir):
-        filepath_str = str(java_file)
-        lines = _cached_read_lines(filepath_str, stats)
+        filepath_abs = str(java_file)
+        try:
+            filepath_str = str(java_file.relative_to(source_dir))
+        except ValueError:
+            filepath_str = filepath_abs
+        lines = _cached_read_lines(filepath_abs, stats)
         if not lines:
             continue
 
@@ -986,8 +1003,12 @@ def _batch_track_getters(
     records: list[GrepRecord] = []
 
     for java_file in _get_java_files(source_dir):
-        filepath_str = str(java_file)
-        lines = _cached_read_lines(filepath_str, stats)
+        filepath_abs = str(java_file)
+        try:
+            filepath_str = str(java_file.relative_to(source_dir))
+        except ValueError:
+            filepath_str = filepath_abs
+        lines = _cached_read_lines(filepath_abs, stats)
         if not lines:
             continue
 
@@ -1045,25 +1066,15 @@ def write_tsv(records: list[GrepRecord], output_path: Path) -> None:
     """
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # ソート順: 文言 → 定義ファイル → 定義行番号 → 直接参照を先頭 → ファイルパス → 行番号
-    # 間接参照は src_file/src_lineno で定義元を特定し、定義行と使用箇所をブロック化する。
-    # 直接参照（定義行）は src_file が空のため、自身の filepath/lineno を定義キーとする。
+    # ソート順: 文言 → ファイルパス → 行番号（昇順）
     def _sort_key(r: GrepRecord) -> tuple:
-        def_file   = r.src_file   if r.src_file   else r.filepath
-        def_lineno = int(r.src_lineno) if r.src_lineno.isdigit() else (
-                     int(r.lineno)    if r.lineno.isdigit()     else 0)
-        ref_order  = 0 if r.ref_type == RefType.DIRECT.value else 1
         lineno_int = int(r.lineno) if r.lineno.isdigit() else 0
-        return (r.keyword, def_file, def_lineno, ref_order, r.filepath, lineno_int)
+        return (r.keyword, r.filepath, lineno_int)
 
     def _row_sort_key(row: list[str]) -> tuple:
         """TSV行リストからソートキーを生成する（外部ソートのマージ用）"""
-        def_file   = row[7] if row[7] else row[3]
-        def_lineno = int(row[8]) if row[8].isdigit() else (
-                     int(row[4]) if row[4].isdigit() else 0)
-        ref_order  = 0 if row[1] == RefType.DIRECT.value else 1
         lineno_int = int(row[4]) if row[4].isdigit() else 0
-        return (row[0], def_file, def_lineno, ref_order, row[3], lineno_int)
+        return (row[0], row[3], lineno_int)
 
     # 外部ソートの閾値: 100万件以上は外部ソートでピークメモリを抑制
     _EXTERNAL_SORT_THRESHOLD = 1_000_000
