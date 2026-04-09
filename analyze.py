@@ -165,7 +165,7 @@ def process_grep_file(
 
     records: list[GrepRecord] = []
 
-    with open(path, encoding="utf-8", errors="replace") as f:
+    with open(path, encoding="cp932", errors="replace") as f:
         for line in f:
             stats.total_lines += 1
             parsed = parse_grep_line(line)
@@ -848,11 +848,18 @@ def write_tsv(records: list[GrepRecord], output_path: Path) -> None:
     """
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # lineno は str 型のため int() 変換して数値ソート（str ソートだと "10" < "9" になるバグ防止）
-    sorted_records = sorted(
-        records,
-        key=lambda r: (r.keyword, r.filepath, int(r.lineno) if r.lineno.isdigit() else 0),
-    )
+    # ソート順: 文言 → 定義ファイル → 定義行番号 → 直接参照を先頭 → ファイルパス → 行番号
+    # 間接参照は src_file/src_lineno で定義元を特定し、定義行と使用箇所をブロック化する。
+    # 直接参照（定義行）は src_file が空のため、自身の filepath/lineno を定義キーとする。
+    def _sort_key(r: GrepRecord) -> tuple:
+        def_file   = r.src_file   if r.src_file   else r.filepath
+        def_lineno = int(r.src_lineno) if r.src_lineno.isdigit() else (
+                     int(r.lineno)    if r.lineno.isdigit()     else 0)
+        ref_order  = 0 if r.ref_type == RefType.DIRECT.value else 1
+        lineno_int = int(r.lineno) if r.lineno.isdigit() else 0
+        return (r.keyword, def_file, def_lineno, ref_order, r.filepath, lineno_int)
+
+    sorted_records = sorted(records, key=_sort_key)
 
     with open(output_path, "w", encoding="utf-8-sig", newline="") as f:
         writer = csv.writer(f, delimiter="\t")
