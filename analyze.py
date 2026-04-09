@@ -94,6 +94,13 @@ class ProcessStats:
 # None = javalang パースエラーが発生したファイル（フォールバック対象）
 _ast_cache: dict[str, object | None] = {}
 
+# AST行インデックス: filepath → {lineno: (usage_type | None, scope | None)}
+# usage_type: UsageType.value, scope: "class" | "method" | None
+_ast_line_index: dict[str, dict[int, tuple[str | None, str | None]]] = {}
+
+# ファイル行キャッシュ: filepath → lines（shift_jis, errors=replace）
+_file_lines_cache: dict[str, list[str]] = {}
+
 
 # ---------------------------------------------------------------------------
 # F-01: GrepParser
@@ -235,6 +242,73 @@ def get_ast(filepath: str, source_dir: Path) -> object | None:
     return _ast_cache[cache_key]
 
 
+def _cached_read_lines(filepath: str | Path, stats: "ProcessStats | None" = None) -> list[str]:
+    """Javaファイルの行リストをキャッシュ付きで返す。同一ファイルは1回のみ読み込む。"""
+    key = str(filepath)
+    if key not in _file_lines_cache:
+        try:
+            _file_lines_cache[key] = Path(filepath).read_text(
+                encoding="shift_jis", errors="replace"
+            ).splitlines()
+        except Exception:
+            if stats is not None:
+                stats.encoding_errors.append(key)
+            _file_lines_cache[key] = []
+    return _file_lines_cache[key]
+
+
+def _get_or_build_ast_index(
+    filepath: str, tree: object
+) -> dict[int, tuple[str | None, str | None]]:
+    """ASTを走査して行番号→(usage_type, scope)インデックスを構築・キャッシュする。
+
+    一度構築すればO(1)ルックアップになり、同一ファイルへの繰り返し走査を排除する。
+    """
+    if not _JAVALANG_AVAILABLE:
+        return {}
+    if filepath in _ast_line_index:
+        return _ast_line_index[filepath]
+
+    usage_by_line: dict[int, str] = {}
+    scope_by_line: dict[int, str] = {}
+
+    for _, node in tree:
+        if not hasattr(node, "position") or node.position is None:
+            continue
+        line = node.position.line
+        u: str | None = None
+        s: str | None = None
+
+        if isinstance(node, javalang.tree.Annotation):
+            u = UsageType.ANNOTATION.value
+        elif isinstance(node, javalang.tree.FieldDeclaration):
+            modifiers = getattr(node, "modifiers", set()) or set()
+            u = (UsageType.CONSTANT.value
+                 if ("static" in modifiers and "final" in modifiers)
+                 else UsageType.VARIABLE.value)
+            s = "class"
+        elif isinstance(node, javalang.tree.LocalVariableDeclaration):
+            u = UsageType.VARIABLE.value
+            s = "method"
+        elif isinstance(node, (javalang.tree.IfStatement, javalang.tree.WhileStatement)):
+            u = UsageType.CONDITION.value
+        elif isinstance(node, javalang.tree.ReturnStatement):
+            u = UsageType.RETURN.value
+        elif isinstance(node, (javalang.tree.MethodInvocation, javalang.tree.ClassCreator)):
+            u = UsageType.ARGUMENT.value
+
+        # 最初にマッチしたノードを優先（ASTトラバーサル順）
+        if u is not None and line not in usage_by_line:
+            usage_by_line[line] = u
+        if s is not None and line not in scope_by_line:
+            scope_by_line[line] = s
+
+    all_lines = set(usage_by_line) | set(scope_by_line)
+    index = {ln: (usage_by_line.get(ln), scope_by_line.get(ln)) for ln in all_lines}
+    _ast_line_index[filepath] = index
+    return index
+
+
 def classify_usage_regex(code: str) -> str:
     """正規表現で使用タイプを分類する（フォールバック専用）。
 
@@ -286,7 +360,7 @@ def classify_usage(
 
     # ASTが利用可能な場合はノードの行番号からタイプを判定
     try:
-        usage = _classify_by_ast(tree, lineno)
+        usage = _classify_by_ast(tree, lineno, filepath)
         if usage is not None:
             return usage
     except Exception:
@@ -298,58 +372,22 @@ def classify_usage(
     return classify_usage_regex(code)
 
 
-def _classify_by_ast(tree: object, lineno: int) -> str | None:
-    """ASTノードの行番号から使用タイプを判定する。
+def _classify_by_ast(tree: object, lineno: int, filepath: str) -> str | None:
+    """ASTインデックスから使用タイプをO(1)で返す。
 
     Args:
-        tree:   javalang の CompilationUnit
-        lineno: 対象行の行番号
+        tree:     javalang の CompilationUnit
+        lineno:   対象行の行番号
+        filepath: ASTインデックスのキャッシュキー
 
     Returns:
         UsageType の value 文字列、または判定不能の場合は None
     """
     if not _JAVALANG_AVAILABLE:
         return None
-
-    for _, node in tree:
-        if not hasattr(node, 'position') or node.position is None:
-            continue
-        if node.position.line != lineno:
-            continue
-
-        # アノテーション
-        if isinstance(node, javalang.tree.Annotation):
-            return UsageType.ANNOTATION.value
-
-        # フィールド・ローカル変数宣言（定数定義・変数代入）
-        if isinstance(node, (
-            javalang.tree.FieldDeclaration,
-            javalang.tree.LocalVariableDeclaration,
-        )):
-            modifiers = getattr(node, 'modifiers', set()) or set()
-            if 'static' in modifiers and 'final' in modifiers:
-                return UsageType.CONSTANT.value
-            return UsageType.VARIABLE.value
-
-        # if / while 文（条件判定）
-        if isinstance(node, (
-            javalang.tree.IfStatement,
-            javalang.tree.WhileStatement,
-        )):
-            return UsageType.CONDITION.value
-
-        # return 文
-        if isinstance(node, javalang.tree.ReturnStatement):
-            return UsageType.RETURN.value
-
-        # メソッド呼び出し（メソッド引数）
-        if isinstance(node, (
-            javalang.tree.MethodInvocation,
-            javalang.tree.ClassCreator,
-        )):
-            return UsageType.ARGUMENT.value
-
-    return None
+    index = _get_or_build_ast_index(filepath, tree)
+    entry = index.get(lineno)
+    return entry[0] if entry else None
 
 
 # ---------------------------------------------------------------------------
@@ -388,21 +426,15 @@ def determine_scope(
     if usage_type == UsageType.CONSTANT.value:
         return "project"
 
-    # AST が利用可能な場合は FieldDeclaration ノードで判定
-    # （パッケージプライベートフィールドも正しく検出できる）
+    # ASTインデックスでO(1)判定（FieldDeclaration/LocalVariableDeclaration）
     if filepath and source_dir and lineno and _JAVALANG_AVAILABLE:
         tree = get_ast(filepath, source_dir)
         if tree is not None:
             try:
-                for _, node in tree:
-                    if not hasattr(node, 'position') or node.position is None:
-                        continue
-                    if node.position.line != lineno:
-                        continue
-                    if isinstance(node, javalang.tree.FieldDeclaration):
-                        return "class"
-                    if isinstance(node, javalang.tree.LocalVariableDeclaration):
-                        return "method"
+                index = _get_or_build_ast_index(filepath, tree)
+                entry = index.get(lineno)
+                if entry and entry[1] is not None:
+                    return entry[1]
             except Exception:
                 pass
 
@@ -511,9 +543,8 @@ def _get_method_scope(
     if java_file is None:
         return None
 
-    try:
-        lines = java_file.read_text(encoding="shift_jis", errors="replace").splitlines()
-    except Exception:
+    lines = _cached_read_lines(java_file)
+    if not lines:
         return None
 
     brace_count = 0
@@ -608,13 +639,11 @@ def track_constant(
     records: list[GrepRecord] = []
 
     for java_file in sorted(source_dir.rglob("*.java")):
-        try:
-            lines = java_file.read_text(encoding="shift_jis", errors="replace").splitlines()
-        except Exception:
-            stats.encoding_errors.append(str(java_file))
+        filepath_str = str(java_file)
+        lines = _cached_read_lines(filepath_str, stats)
+        if not lines:
             continue
 
-        filepath_str = str(java_file)
         records.extend(_search_in_lines(
             lines=lines,
             var_name=var_name,
@@ -648,10 +677,8 @@ def track_field(
     Returns:
         間接参照 GrepRecord のリスト
     """
-    try:
-        lines = class_file.read_text(encoding="shift_jis", errors="replace").splitlines()
-    except Exception:
-        stats.encoding_errors.append(str(class_file))
+    lines = _cached_read_lines(str(class_file), stats)
+    if not lines:
         return []
 
     return _search_in_lines(
@@ -689,10 +716,8 @@ def track_local(
     if java_file is None:
         return []
 
-    try:
-        all_lines = java_file.read_text(encoding="shift_jis", errors="replace").splitlines()
-    except Exception:
-        stats.encoding_errors.append(str(java_file))
+    all_lines = _cached_read_lines(str(java_file), stats)
+    if not all_lines:
         return []
 
     start_line, end_line = method_scope
@@ -791,13 +816,11 @@ def track_getter_calls(
     records: list[GrepRecord] = []
 
     for java_file in sorted(source_dir.rglob("*.java")):
-        try:
-            lines = java_file.read_text(encoding="shift_jis", errors="replace").splitlines()
-        except Exception:
-            stats.encoding_errors.append(str(java_file))
+        filepath_str = str(java_file)
+        lines = _cached_read_lines(filepath_str, stats)
+        if not lines:
             continue
 
-        filepath_str = str(java_file)
         for i, line in enumerate(lines, start=1):
             if not pattern.search(line):
                 continue
@@ -821,6 +844,122 @@ def track_getter_calls(
                 src_file=origin.filepath,
                 src_lineno=origin.lineno,
             ))
+
+    return records
+
+
+# ---------------------------------------------------------------------------
+# バッチスキャン（プロジェクト全体を1パスで複数パターン検索）
+# ---------------------------------------------------------------------------
+
+def _batch_track_constants(
+    tasks: dict[str, list[GrepRecord]],
+    source_dir: Path,
+    stats: ProcessStats,
+) -> list[GrepRecord]:
+    """複数の定数をプロジェクト全体で一括追跡する。
+
+    個別に track_constant() を呼ぶと O(N_定数 × N_ファイル) になるところを、
+    組み合わせ正規表現で1パスに削減する。
+    """
+    if not tasks:
+        return []
+
+    combined = re.compile(
+        r"\b(" + "|".join(re.escape(k) for k in tasks) + r")\b"
+    )
+    records: list[GrepRecord] = []
+
+    for java_file in sorted(source_dir.rglob("*.java")):
+        filepath_str = str(java_file)
+        lines = _cached_read_lines(filepath_str, stats)
+        if not lines:
+            continue
+
+        for i, line in enumerate(lines, start=1):
+            for m in combined.finditer(line):
+                matched_name = m.group(1)
+                origins = tasks.get(matched_name)
+                if not origins:
+                    continue
+
+                code = line.strip()
+                usage_type = classify_usage(
+                    code=code,
+                    filepath=filepath_str,
+                    lineno=i,
+                    source_dir=source_dir,
+                    stats=stats,
+                )
+                for origin in origins:
+                    if filepath_str == origin.filepath and str(i) == origin.lineno:
+                        continue  # 定義行はスキップ
+                    records.append(GrepRecord(
+                        keyword=origin.keyword,
+                        ref_type=RefType.INDIRECT.value,
+                        usage_type=usage_type,
+                        filepath=filepath_str,
+                        lineno=str(i),
+                        code=code,
+                        src_var=matched_name,
+                        src_file=origin.filepath,
+                        src_lineno=origin.lineno,
+                    ))
+
+    return records
+
+
+def _batch_track_getters(
+    tasks: dict[str, list[GrepRecord]],
+    source_dir: Path,
+    stats: ProcessStats,
+) -> list[GrepRecord]:
+    """複数のgetterをプロジェクト全体で一括追跡する。
+
+    個別に track_getter_calls() を呼ぶと O(N_getter × N_ファイル) になるところを、
+    組み合わせ正規表現で1パスに削減する。
+    """
+    if not tasks:
+        return []
+
+    combined = re.compile(
+        r"\b(" + "|".join(re.escape(k) for k in tasks) + r")\s*\("
+    )
+    records: list[GrepRecord] = []
+
+    for java_file in sorted(source_dir.rglob("*.java")):
+        filepath_str = str(java_file)
+        lines = _cached_read_lines(filepath_str, stats)
+        if not lines:
+            continue
+
+        for i, line in enumerate(lines, start=1):
+            for m in combined.finditer(line):
+                getter_name = m.group(1)
+                origins = tasks.get(getter_name)
+                if not origins:
+                    continue
+
+                code = line.strip()
+                usage_type = classify_usage(
+                    code=code,
+                    filepath=filepath_str,
+                    lineno=i,
+                    source_dir=source_dir,
+                    stats=stats,
+                )
+                for origin in origins:
+                    records.append(GrepRecord(
+                        keyword=origin.keyword,
+                        ref_type=RefType.GETTER.value,
+                        usage_type=usage_type,
+                        filepath=filepath_str,
+                        lineno=str(i),
+                        code=code,
+                        src_var=getter_name,
+                        src_file=origin.filepath,
+                        src_lineno=origin.lineno,
+                    ))
 
     return records
 
@@ -978,6 +1117,10 @@ def main() -> None:
             all_records: list[GrepRecord] = list(direct_records)
 
             # 第2・第3段階: 間接参照・getter経由参照の追跡
+            # プロジェクト全体スキャンはバッチ化して1パスに削減
+            project_scope_tasks: dict[str, list[GrepRecord]] = {}
+            getter_tasks: dict[str, list[GrepRecord]] = {}
+
             for record in direct_records:
                 if record.usage_type not in (
                     UsageType.CONSTANT.value, UsageType.VARIABLE.value
@@ -994,10 +1137,8 @@ def main() -> None:
                 )
 
                 if scope == "project":
-                    # 第2段階: 定数をプロジェクト全体で追跡
-                    all_records.extend(
-                        track_constant(var_name, source_dir, record, stats)
-                    )
+                    # バッチ追跡リストに積む（後でまとめて1パススキャン）
+                    project_scope_tasks.setdefault(var_name, []).append(record)
 
                 elif scope == "class":
                     # 第2段階: フィールドを同一クラス内で追跡
@@ -1006,11 +1147,9 @@ def main() -> None:
                         indirect = track_field(var_name, class_file, record, source_dir, stats)
                         all_records.extend(indirect)
 
-                        # 第3段階: getter経由を追跡
+                        # getter名を収集してバッチ追跡リストに積む
                         for getter_name in find_getter_names(var_name, class_file):
-                            all_records.extend(
-                                track_getter_calls(getter_name, source_dir, record, stats)
-                            )
+                            getter_tasks.setdefault(getter_name, []).append(record)
 
                 elif scope == "method":
                     # 第2段階: ローカル変数を同一メソッド内で追跡
@@ -1021,6 +1160,16 @@ def main() -> None:
                         all_records.extend(
                             track_local(var_name, method_scope, record, source_dir, stats)
                         )
+
+            # 定数・getter をプロジェクト全体に対して各1パスで一括スキャン
+            if project_scope_tasks:
+                all_records.extend(
+                    _batch_track_constants(project_scope_tasks, source_dir, stats)
+                )
+            if getter_tasks:
+                all_records.extend(
+                    _batch_track_getters(getter_tasks, source_dir, stats)
+                )
 
             # 出力
             output_path = output_dir / f"{keyword}.tsv"
