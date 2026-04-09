@@ -7,11 +7,14 @@ from __future__ import annotations
 
 import argparse
 import csv
+import heapq
 import re
 import sys
+import tempfile
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
+from typing import NamedTuple
 
 try:
     import javalang
@@ -63,9 +66,8 @@ class UsageType(Enum):
     OTHER = "その他"
 
 
-@dataclass(frozen=True)
-class GrepRecord:
-    """分析結果の1件を表すイミュータブルなデータモデル。"""
+class GrepRecord(NamedTuple):
+    """分析結果の1件を表すイミュータブルなデータモデル。NamedTupleでメモリ効率を最大化。"""
     keyword: str        # 検索した文言（入力ファイル名から取得）
     ref_type: str       # 参照種別（RefType.value）
     usage_type: str     # 使用タイプ（UsageType.value）
@@ -83,13 +85,17 @@ class ProcessStats:
     total_lines:     int = 0
     valid_lines:     int = 0
     skipped_lines:   int = 0
-    fallback_files:  list[str] = field(default_factory=list)
-    encoding_errors: list[str] = field(default_factory=list)
+    fallback_files:  set[str] = field(default_factory=set)   # O(1) membership
+    encoding_errors: set[str] = field(default_factory=set)   # O(1) membership
 
 
 # ---------------------------------------------------------------------------
 # ASTキャッシュ（モジュールレベル・シングルトン）
 # ---------------------------------------------------------------------------
+
+# キャッシュ上限（大規模プロジェクトでのOOM防止）
+_MAX_AST_CACHE_SIZE = 300    # ASTオブジェクトは大きいため厳しめ
+_MAX_FILE_CACHE_SIZE = 800   # ファイル行キャッシュの最大エントリ数
 
 # None = javalang パースエラーが発生したファイル（フォールバック対象）
 _ast_cache: dict[str, object | None] = {}
@@ -100,6 +106,12 @@ _ast_line_index: dict[str, dict[int, tuple[str | None, str | None]]] = {}
 
 # ファイル行キャッシュ: filepath → lines（shift_jis, errors=replace）
 _file_lines_cache: dict[str, list[str]] = {}
+
+# Javaファイルリストキャッシュ: source_dir → sorted list of .java paths
+_java_files_cache: dict[str, list[Path]] = {}
+
+# メソッド開始行キャッシュ: filepath → sorted list of method start line numbers
+_method_starts_cache: dict[str, list[int]] = {}
 
 
 # ---------------------------------------------------------------------------
@@ -162,8 +174,9 @@ def process_grep_file(
     Returns:
         直接参照 GrepRecord のリスト
     """
-    # 500MB超の場合は警告
+    # 50MB超の場合は警告と進捗報告を有効化
     file_size_mb = path.stat().st_size / (1024 * 1024)
+    report_progress = file_size_mb > 50
     if file_size_mb > 500:
         print(
             f"警告: {path.name} のサイズが {file_size_mb:.1f}MB を超えています。処理に時間がかかる場合があります。",
@@ -171,10 +184,20 @@ def process_grep_file(
         )
 
     records: list[GrepRecord] = []
+    _PROGRESS_INTERVAL = 100_000  # 10万行ごとに進捗表示
 
     with open(path, encoding="cp932", errors="replace") as f:
         for line in f:
             stats.total_lines += 1
+
+            if report_progress and stats.total_lines % _PROGRESS_INTERVAL == 0:
+                print(
+                    f"  進捗: {path.name} {stats.total_lines:,} 行処理済み"
+                    f" (有効: {stats.valid_lines:,})",
+                    file=sys.stderr,
+                    flush=True,
+                )
+
             parsed = parse_grep_line(line)
             if parsed is None:
                 stats.skipped_lines += 1
@@ -222,6 +245,13 @@ def get_ast(filepath: str, source_dir: Path) -> object | None:
     if cache_key in _ast_cache:
         return _ast_cache[cache_key]
 
+    # キャッシュ上限に達した場合、最古エントリを削除
+    if len(_ast_cache) >= _MAX_AST_CACHE_SIZE:
+        oldest = next(iter(_ast_cache))
+        del _ast_cache[oldest]
+        _ast_line_index.pop(oldest, None)
+        _method_starts_cache.pop(oldest, None)
+
     # source_dir / filepath または filepath 単体で試みる
     candidate = Path(filepath)
     if not candidate.is_absolute():
@@ -246,13 +276,16 @@ def _cached_read_lines(filepath: str | Path, stats: "ProcessStats | None" = None
     """Javaファイルの行リストをキャッシュ付きで返す。同一ファイルは1回のみ読み込む。"""
     key = str(filepath)
     if key not in _file_lines_cache:
+        # キャッシュ上限に達した場合、最古エントリを削除
+        if len(_file_lines_cache) >= _MAX_FILE_CACHE_SIZE:
+            _file_lines_cache.pop(next(iter(_file_lines_cache)))
         try:
             _file_lines_cache[key] = Path(filepath).read_text(
                 encoding="shift_jis", errors="replace"
             ).splitlines()
         except Exception:
             if stats is not None:
-                stats.encoding_errors.append(key)
+                stats.encoding_errors.add(key)
             _file_lines_cache[key] = []
     return _file_lines_cache[key]
 
@@ -354,8 +387,8 @@ def classify_usage(
 
     if tree is None:
         # AST解析失敗またはjavalang未インストール → 正規表現フォールバック
-        if _JAVALANG_AVAILABLE and filepath not in stats.fallback_files:
-            stats.fallback_files.append(filepath)
+        if _JAVALANG_AVAILABLE:
+            stats.fallback_files.add(filepath)  # setなので重複は自動的に無視
         return classify_usage_regex(code)
 
     # ASTが利用可能な場合はノードの行番号からタイプを判定
@@ -365,8 +398,7 @@ def classify_usage(
             return usage
     except Exception:
         # AST走査中の予期しない例外 → フォールバック対象として記録して継続
-        if filepath not in stats.fallback_files:
-            stats.fallback_files.append(filepath)
+        stats.fallback_files.add(filepath)
 
     # AST解析で判定できなかった場合は正規表現フォールバック
     return classify_usage_regex(code)
@@ -492,6 +524,32 @@ def _resolve_java_file(filepath: str, source_dir: Path) -> Path | None:
     return None
 
 
+def _get_method_starts(filepath: str, source_dir: Path) -> list[int]:
+    """ファイルの全メソッド開始行をキャッシュ付きで返す（内部ヘルパー）。
+
+    同一ファイルに対する繰り返し呼び出しでASTフィルタリングを省略する。
+    """
+    if filepath in _method_starts_cache:
+        return _method_starts_cache[filepath]
+
+    tree = get_ast(filepath, source_dir)
+    if tree is None:
+        _method_starts_cache[filepath] = []
+        return []
+
+    method_starts: list[int] = []
+    try:
+        for _, method_decl in tree.filter(javalang.tree.MethodDeclaration):
+            if method_decl.position:
+                method_starts.append(method_decl.position.line)
+        method_starts.sort()
+    except Exception:
+        method_starts = []
+
+    _method_starts_cache[filepath] = method_starts
+    return method_starts
+
+
 def _get_method_scope(
     filepath: str, source_dir: Path, lineno: int
 ) -> tuple[int, int] | None:
@@ -511,23 +569,10 @@ def _get_method_scope(
     if not _JAVALANG_AVAILABLE:
         return None
 
-    tree = get_ast(filepath, source_dir)
-    if tree is None:
-        return None
-
-    # メソッド開始行をすべて収集してソート
-    method_starts: list[int] = []
-    try:
-        for _, method_decl in tree.filter(javalang.tree.MethodDeclaration):
-            if method_decl.position:
-                method_starts.append(method_decl.position.line)
-    except Exception:
-        return None
-
+    # キャッシュ済みメソッド開始行を取得（AST再フィルタリングを省略）
+    method_starts = _get_method_starts(filepath, source_dir)
     if not method_starts:
         return None
-
-    method_starts.sort()
 
     # lineno を含むメソッドの開始行を特定（lineno 以下で最大のもの）
     method_start = None
@@ -619,6 +664,19 @@ def _search_in_lines(
     return records
 
 
+def _get_java_files(source_dir: Path) -> list[Path]:
+    """source_dir 配下の .java ファイルリストをキャッシュ付きで返す。
+
+    rglob は呼び出しごとにディスクスキャンを行うため、同一 source_dir に対しては
+    1回だけ実行してキャッシュする。_batch_track_constants / _batch_track_getters /
+    track_constant / track_getter_calls で共有することで I/O を大幅に削減する。
+    """
+    key = str(source_dir)
+    if key not in _java_files_cache:
+        _java_files_cache[key] = sorted(source_dir.rglob("*.java"))
+    return _java_files_cache[key]
+
+
 def track_constant(
     var_name: str,
     source_dir: Path,
@@ -638,7 +696,7 @@ def track_constant(
     """
     records: list[GrepRecord] = []
 
-    for java_file in sorted(source_dir.rglob("*.java")):
+    for java_file in _get_java_files(source_dir):
         filepath_str = str(java_file)
         lines = _cached_read_lines(filepath_str, stats)
         if not lines:
@@ -815,7 +873,7 @@ def track_getter_calls(
     pattern = re.compile(r'\b' + re.escape(getter_name) + r'\s*\(')
     records: list[GrepRecord] = []
 
-    for java_file in sorted(source_dir.rglob("*.java")):
+    for java_file in _get_java_files(source_dir):
         filepath_str = str(java_file)
         lines = _cached_read_lines(filepath_str, stats)
         if not lines:
@@ -870,7 +928,7 @@ def _batch_track_constants(
     )
     records: list[GrepRecord] = []
 
-    for java_file in sorted(source_dir.rglob("*.java")):
+    for java_file in _get_java_files(source_dir):
         filepath_str = str(java_file)
         lines = _cached_read_lines(filepath_str, stats)
         if not lines:
@@ -927,7 +985,7 @@ def _batch_track_getters(
     )
     records: list[GrepRecord] = []
 
-    for java_file in sorted(source_dir.rglob("*.java")):
+    for java_file in _get_java_files(source_dir):
         filepath_str = str(java_file)
         lines = _cached_read_lines(filepath_str, stats)
         if not lines:
@@ -998,23 +1056,76 @@ def write_tsv(records: list[GrepRecord], output_path: Path) -> None:
         lineno_int = int(r.lineno) if r.lineno.isdigit() else 0
         return (r.keyword, def_file, def_lineno, ref_order, r.filepath, lineno_int)
 
-    sorted_records = sorted(records, key=_sort_key)
+    def _row_sort_key(row: list[str]) -> tuple:
+        """TSV行リストからソートキーを生成する（外部ソートのマージ用）"""
+        def_file   = row[7] if row[7] else row[3]
+        def_lineno = int(row[8]) if row[8].isdigit() else (
+                     int(row[4]) if row[4].isdigit() else 0)
+        ref_order  = 0 if row[1] == RefType.DIRECT.value else 1
+        lineno_int = int(row[4]) if row[4].isdigit() else 0
+        return (row[0], def_file, def_lineno, ref_order, row[3], lineno_int)
 
-    with open(output_path, "w", encoding="utf-8-sig", newline="") as f:
-        writer = csv.writer(f, delimiter="\t")
-        writer.writerow(_TSV_HEADERS)
-        for r in sorted_records:
-            writer.writerow([
-                r.keyword,
-                r.ref_type,
-                r.usage_type,
-                r.filepath,
-                r.lineno,
-                r.code,
-                r.src_var,
-                r.src_file,
-                r.src_lineno,
-            ])
+    # 外部ソートの閾値: 100万件以上は外部ソートでピークメモリを抑制
+    _EXTERNAL_SORT_THRESHOLD = 1_000_000
+
+    if len(records) < _EXTERNAL_SORT_THRESHOLD:
+        # 通常: インプレースソート（コピーなし）
+        records.sort(key=_sort_key)
+        with open(output_path, "w", encoding="utf-8-sig", newline="") as f:
+            writer = csv.writer(f, delimiter="\t")
+            writer.writerow(_TSV_HEADERS)
+            for r in records:
+                writer.writerow([
+                    r.keyword, r.ref_type, r.usage_type, r.filepath,
+                    r.lineno, r.code, r.src_var, r.src_file, r.src_lineno,
+                ])
+    else:
+        # 大規模: チャンク分割 → 各チャンクをソートして一時ファイルへ → ヒープマージ
+        _CHUNK_SIZE = 500_000
+        tmp_paths: list[Path] = []
+        tmp_dir = output_path.parent
+
+        try:
+            for i in range(0, len(records), _CHUNK_SIZE):
+                chunk = records[i:i + _CHUNK_SIZE]
+                chunk.sort(key=_sort_key)
+
+                # 一時ファイルへ書き出し
+                fd, tmp_str = tempfile.mkstemp(
+                    suffix=".tmp", prefix=f".{output_path.stem}_chunk_",
+                    dir=tmp_dir,
+                )
+                tmp_path = Path(tmp_str)
+                tmp_paths.append(tmp_path)
+                with open(fd, "w", encoding="utf-8", newline="") as f:
+                    w = csv.writer(f, delimiter="\t")
+                    for r in chunk:
+                        w.writerow([
+                            r.keyword, r.ref_type, r.usage_type, r.filepath,
+                            r.lineno, r.code, r.src_var, r.src_file, r.src_lineno,
+                        ])
+                del chunk  # チャンクのメモリを即解放
+
+            del records  # 全レコードのメモリを解放してからマージ
+
+            # ヒープマージ: 全チャンクを一括マージして最終 TSV へ
+            handles = [
+                open(p, "r", encoding="utf-8", newline="") for p in tmp_paths
+            ]
+            readers = [csv.reader(h, delimiter="\t") for h in handles]
+            try:
+                with open(output_path, "w", encoding="utf-8-sig", newline="") as f:
+                    writer = csv.writer(f, delimiter="\t")
+                    writer.writerow(_TSV_HEADERS)
+                    for row in heapq.merge(*readers, key=_row_sort_key):
+                        writer.writerow(row)
+            finally:
+                for h in handles:
+                    h.close()
+
+        finally:
+            for p in tmp_paths:
+                p.unlink(missing_ok=True)
 
 
 # ---------------------------------------------------------------------------
@@ -1037,11 +1148,11 @@ def print_report(stats: ProcessStats, processed_files: list[str]) -> None:
     )
     if stats.fallback_files:
         print(f"ASTフォールバック ({len(stats.fallback_files)} 件):")
-        for f in stats.fallback_files:
+        for f in sorted(stats.fallback_files):
             print(f"  {f}")
     if stats.encoding_errors:
         print(f"エンコーディングエラー ({len(stats.encoding_errors)} 件):")
-        for f in stats.encoding_errors:
+        for f in sorted(stats.encoding_errors):
             print(f"  {f}")
 
 
