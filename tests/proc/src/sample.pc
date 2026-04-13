@@ -1,0 +1,28 @@
+/* sample.pc: テスト用Pro*Cソースファイル */
+#include "constants.h"
+
+EXEC SQL BEGIN DECLARE SECTION;
+    char hostCode[256];
+EXEC SQL END DECLARE SECTION;
+
+void process_direct(void) {
+    char localCode[] = "TARGET";
+
+    if (strcmp(localCode, "TARGET") == 0) {
+        printf("found\n");
+    }
+}
+
+void process_host(void) {
+    EXEC SQL SELECT code INTO :hostCode FROM mytable WHERE code = 'TARGET';
+    if (strcmp(hostCode, "TARGET") == 0) {
+        printf("host found\n");
+    }
+}
+
+void use_define(void) {
+    printf(SAMPLE_CODE);
+    if (strcmp(buf, SAMPLE_CODE) == 0) {
+        return;
+    }
+}

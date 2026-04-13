@@ -1,0 +1,5 @@
+sample.pc:9:    char localCode[] = "TARGET";
+sample.pc:11:    if (strcmp(localCode, "TARGET") == 0) {
+sample.pc:17:    EXEC SQL SELECT code INTO :hostCode FROM mytable WHERE code = 'TARGET';
+sample.pc:18:    if (strcmp(hostCode, "TARGET") == 0) {
+constants.h:5:#define SAMPLE_CODE "TARGET"

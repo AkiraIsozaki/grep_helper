@@ -1066,15 +1066,27 @@ def write_tsv(records: list[GrepRecord], output_path: Path) -> None:
     """
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # ソート順: 文言 → ファイルパス → 行番号（昇順）
+    # ソート順: 文言 → 直接参照の(ファイルパス, 行番号) → 直接参照が先(0) → 間接参照の(ファイルパス, 行番号)
+    # 直接参照の直後にその間接参照が続くようにグループ化する
     def _sort_key(r: GrepRecord) -> tuple:
         lineno_int = int(r.lineno) if r.lineno.isdigit() else 0
-        return (r.keyword, r.filepath, lineno_int)
+        if r.ref_type == RefType.DIRECT.value:
+            # 直接参照: 自身の(filepath, lineno)を基準キーとし、グループ内で先頭(0)
+            return (r.keyword, r.filepath, lineno_int, 0, "", 0)
+        else:
+            # 間接参照: 元の直接参照の(src_file, src_lineno)を基準キーとし、後続(1)
+            src_lineno_int = int(r.src_lineno) if r.src_lineno.isdigit() else 0
+            return (r.keyword, r.src_file, src_lineno_int, 1, r.filepath, lineno_int)
 
     def _row_sort_key(row: list[str]) -> tuple:
         """TSV行リストからソートキーを生成する（外部ソートのマージ用）"""
+        # row: [keyword, ref_type, usage_type, filepath, lineno, code, src_var, src_file, src_lineno]
         lineno_int = int(row[4]) if row[4].isdigit() else 0
-        return (row[0], row[3], lineno_int)
+        if row[1] == RefType.DIRECT.value:
+            return (row[0], row[3], lineno_int, 0, "", 0)
+        else:
+            src_lineno_int = int(row[8]) if row[8].isdigit() else 0
+            return (row[0], row[7], src_lineno_int, 1, row[3], lineno_int)
 
     # 外部ソートの閾値: 100万件以上は外部ソートでピークメモリを抑制
     _EXTERNAL_SORT_THRESHOLD = 1_000_000

@@ -1,0 +1,9 @@
+﻿文言	参照種別	使用タイプ	ファイルパス	行番号	コード行	参照元変数名	参照元ファイル	参照元行番号
+TARGET	直接	#define定数定義	constants.h	5	"#define SAMPLE_CODE ""TARGET"""			
+TARGET	間接	関数引数	sample.pc	24	printf(SAMPLE_CODE);	SAMPLE_CODE	constants.h	5
+TARGET	間接	条件判定	sample.pc	25	if (strcmp(buf, SAMPLE_CODE) == 0) {	SAMPLE_CODE	constants.h	5
+TARGET	直接	変数代入	sample.pc	9	"char localCode[] = ""TARGET"";"			
+TARGET	間接	条件判定	sample.pc	11	"if (strcmp(localCode, ""TARGET"") == 0) {"	localCode	sample.pc	9
+TARGET	直接	条件判定	sample.pc	11	"if (strcmp(localCode, ""TARGET"") == 0) {"			
+TARGET	直接	EXEC SQL文	sample.pc	17	EXEC SQL SELECT code INTO :hostCode FROM mytable WHERE code = 'TARGET';			
+TARGET	直接	条件判定	sample.pc	18	"if (strcmp(hostCode, ""TARGET"") == 0) {"			

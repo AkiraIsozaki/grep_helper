@@ -268,7 +268,7 @@ def track_getter_calls(getter_name: str, source_dir: Path, origin: GrepRecord,
 
 **責務**:
 - GrepRecordのリストをUTF-8 BOM付きTSVに書き出す
-- ソート順: 文言 → ファイルパス → 行番号（昇順）
+- ソート順: 文言 → 直接参照の(ファイルパス → 行番号) → 直接参照が先・間接参照が後（直接参照の直後にその間接参照が続くグループ順）
 - `output/` ディレクトリが存在しない場合は自動作成する
 
 **インターフェース**:
@@ -278,9 +278,10 @@ def write_tsv(records: list[GrepRecord], output_path: Path) -> None:
     ヘッダー: 文言,参照種別,使用タイプ,ファイルパス,行番号,コード行,
               参照元変数名,参照元ファイル,参照元行番号
     エンコード: utf-8-sig（Excel対応BOM付き）
-    ソート実装: lineno は str 型のため int() 変換して数値ソートすること。
-        records.sort(key=lambda r: (r.keyword, r.filepath, int(r.lineno)))
-        ※ str ソートのまま実装すると "10" < "9" になるバグが発生する
+    ソート実装: 直接参照の直後にその間接参照が続くようにグループ化する。
+        直接参照: (keyword, filepath, int(lineno), 0, "", 0)
+        間接参照: (keyword, src_file, int(src_lineno), 1, filepath, int(lineno))
+        ※ lineno は str 型のため int() 変換して数値ソートすること（"10" < "9" バグ防止）
     """
 ```
 
